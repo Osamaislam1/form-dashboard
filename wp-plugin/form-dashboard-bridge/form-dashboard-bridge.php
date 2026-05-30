@@ -113,10 +113,25 @@ class Form_Dashboard_Bridge {
         $last_send     = get_option('fdash_last_send_result', null);
         $mailer        = self::detect_mailer();
         $freq          = $opt['email_frequency'] ?? 'daily';
-        $remote        = get_transient('fdash_update_check');
-        $has_update    = is_array($remote) && empty($remote['_error'])
-                         && isset($remote['version'])
-                         && version_compare($remote['version'], self::VERSION, '>');
+        // Settings page uses a 5-min cache for freshness; falls back to fetching GitHub directly.
+        $remote = get_transient('fdash_settings_version');
+        if (!is_array($remote) || !empty($remote['_error'])) {
+            $resp = wp_remote_get(self::UPDATE_JSON_URL, ['timeout' => 5, 'sslverify' => true]);
+            if (!is_wp_error($resp) && wp_remote_retrieve_response_code($resp) === 200) {
+                $fresh = json_decode(wp_remote_retrieve_body($resp), true);
+                if (is_array($fresh) && !empty($fresh['version'])) {
+                    $remote = $fresh;
+                    set_transient('fdash_settings_version', $remote, 5 * MINUTE_IN_SECONDS);
+                    set_transient('fdash_update_check',     $remote, 6 * HOUR_IN_SECONDS);
+                }
+            }
+            if (!is_array($remote)) {
+                $remote = get_transient('fdash_update_check');
+            }
+        }
+        $has_update = is_array($remote) && empty($remote['_error'])
+                      && isset($remote['version'])
+                      && version_compare($remote['version'], self::VERSION, '>');
         ?>
         <style>
         #fdash-wrap { max-width: 960px; }
