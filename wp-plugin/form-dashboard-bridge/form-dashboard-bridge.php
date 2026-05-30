@@ -549,10 +549,10 @@ class Form_Dashboard_Bridge {
                 return "Forminator table not found: {$entry_table}";
             }
 
-            // Fetch all entries — entry_id is the PK column in frmt_form_entry (not 'id').
+            // Fetch all entries — select only the stable columns present in all Forminator versions.
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
             $all_entries = $wpdb->get_results(
-                "SELECT entry_id, form_id, ip, date_created FROM {$entry_table} ORDER BY form_id, entry_id ASC"
+                "SELECT entry_id, form_id, date_created FROM {$entry_table} ORDER BY form_id, entry_id ASC"
             );
 
             if (empty($all_entries)) {
