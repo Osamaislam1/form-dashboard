@@ -188,7 +188,7 @@ class Form_Dashboard_Bridge {
                         <td>
                             <label>
                                 <input type="checkbox" name="<?= self::OPT ?>[auto_update]" value="1"
-                                    <?= !empty($opt['auto_update']) ? 'checked' : '' ?>>
+                                    <?= ($opt['auto_update'] ?? '1') !== '0' ? 'checked' : '' ?>>
                                 Automatically install plugin updates when a new version is released
                             </label>
                             <p class="description">When enabled, WordPress silently updates this plugin without any admin action. When disabled, updates appear in the Plugins screen but require a manual click.</p>
@@ -1093,7 +1093,8 @@ class Form_Dashboard_Bridge {
     public static function maybe_auto_update($update, object $item): ?bool {
         if (isset($item->plugin) && $item->plugin === 'form-dashboard-bridge/form-dashboard-bridge.php') {
             $opt = get_option(self::OPT, []);
-            return !empty($opt['auto_update']);
+            // Default to true on fresh installs (key not yet saved).
+            return isset($opt['auto_update']) ? $opt['auto_update'] === '1' : true;
         }
         return $update;
     }
