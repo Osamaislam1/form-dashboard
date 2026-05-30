@@ -1,12 +1,12 @@
 {
-  "version":      "1.2.4",
+  "version":      "1.2.5",
   "requires":     "5.8",
   "tested":       "6.6",
   "requires_php": "8.0",
-  "last_updated": "2026-05-30T07:14:56Z",
-  "download_url": "https://github.com/Osamaislam1/form-dashboard/releases/download/v1.2.4/form-dashboard-bridge.zip",
+  "last_updated": "2026-05-30T07:23:17Z",
+  "download_url": "https://github.com/Osamaislam1/form-dashboard/releases/download/v1.2.5/form-dashboard-bridge.zip",
   "sections": {
     "description": "Sends form submissions from this WordPress site to a central Form Dashboard.",
-    "changelog":   "See https://github.com/Osamaislam1/form-dashboard/releases/tag/v1.2.4"
+    "changelog":   "See https://github.com/Osamaislam1/form-dashboard/releases/tag/v1.2.5"
   }
 }
