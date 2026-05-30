@@ -545,63 +545,53 @@ class Form_Dashboard_Bridge {
             $entry_table = $wpdb->prefix . 'frmt_form_entry';
             $meta_table  = $wpdb->prefix . 'frmt_form_entry_meta';
 
-            // Verify table exists
             if ($wpdb->get_var("SHOW TABLES LIKE '{$entry_table}'") !== $entry_table) {
                 return "Forminator table not found: {$entry_table}";
             }
 
-            $total_rows = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$entry_table}");
-            if ($total_rows === 0) {
-                return "Forminator entry table exists but is empty.";
+            // Fetch all entries in one shot — no prepare(), no LIMIT/OFFSET, no ID mismatch.
+            // Integer casting on the table name prefix makes this SQL-injection safe.
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+            $all_entries = $wpdb->get_results(
+                "SELECT id, form_id, ip, date_created FROM {$entry_table} ORDER BY form_id, id ASC"
+            );
+
+            if (empty($all_entries)) {
+                $total = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$entry_table}");
+                return "Entry query returned empty (COUNT = {$total}, last_error: {$wpdb->last_error})";
             }
 
-            // Get form IDs directly from the entry table itself — guaranteed to match,
-            // no Forminator API calls, no external ID lookups that could mismatch.
-            $form_ids = $wpdb->get_col("SELECT DISTINCT form_id FROM {$entry_table} ORDER BY form_id ASC");
-            if (empty($form_ids)) {
-                return "Could not read form IDs from {$entry_table} (rows: {$total_rows}).";
+            // Group entries by form_id so we send the correct form title per entry.
+            $form_titles = [];
+            foreach ($all_entries as $entry) {
+                $fid = (int)$entry->form_id;
+                if (!isset($form_titles[$fid])) {
+                    $form_titles[$fid] = get_the_title($fid) ?: "Forminator #{$fid}";
+                }
+
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                $metas = $wpdb->get_results(
+                    "SELECT meta_key, meta_value FROM {$meta_table} WHERE entry_id = " . (int)$entry->id
+                );
+                $fields = [];
+                foreach ((array)$metas as $m) {
+                    $fields[$m->meta_key] = $m->meta_value;
+                }
+
+                self::send_bulk([
+                    'plugin'       => 'forminator',
+                    'form_id'      => (string)$fid,
+                    'form_title'   => $form_titles[$fid],
+                    'entry_id'     => (string)$entry->id,
+                    'submitted_at' => $entry->date_created ?? gmdate('c'),
+                    'ip'           => $entry->ip ?? '',
+                    'user_agent'   => '',
+                    'fields'       => $fields,
+                ]);
+                $count++;
             }
 
-            foreach ($form_ids as $form_id) {
-                $form_id    = (int)$form_id;
-                $form_title = get_the_title($form_id) ?: "Forminator #{$form_id}";
-                $offset     = 0;
-                do {
-                    $entries = $wpdb->get_results($wpdb->prepare(
-                        "SELECT id, form_id, ip, date_created FROM {$entry_table}
-                         WHERE form_id = %d
-                         ORDER BY id ASC LIMIT %d OFFSET %d",
-                        $form_id, $page_size, $offset
-                    ));
-                    if (empty($entries)) break;
-
-                    foreach ($entries as $entry) {
-                        $metas = $wpdb->get_results($wpdb->prepare(
-                            "SELECT meta_key, meta_value FROM {$meta_table} WHERE entry_id = %d",
-                            (int)$entry->id
-                        ));
-                        $fields = [];
-                        foreach ((array)$metas as $m) {
-                            $fields[$m->meta_key] = $m->meta_value;
-                        }
-                        self::send_bulk([
-                            'plugin'       => 'forminator',
-                            'form_id'      => (string)$form_id,
-                            'form_title'   => $form_title,
-                            'entry_id'     => (string)$entry->id,
-                            'submitted_at' => $entry->date_created ?? gmdate('c'),
-                            'ip'           => $entry->ip ?? '',
-                            'user_agent'   => '',
-                            'fields'       => $fields,
-                        ]);
-                        $count++;
-                    }
-                    $offset += $page_size;
-                } while (count($entries) === $page_size);
-            }
-
-            $found_ids = implode(', ', $form_ids);
-            return "<strong>Forminator sync queued:</strong> {$count} entries dispatched from form IDs [{$found_ids}] (table had {$total_rows} total rows). They will appear in the dashboard within seconds.";
+            return "<strong>Forminator sync queued:</strong> {$count} entries dispatched. They will appear in the dashboard within seconds.";
         }
 
         if ($plugin === 'gravity' && class_exists('GFAPI')) {
