@@ -540,23 +540,20 @@ class Form_Dashboard_Bridge {
 
         try {
 
-        if ($plugin === 'forminator') {
+        if ($plugin === 'forminator' && class_exists('Forminator_API')) {
             global $wpdb;
             $entry_table = $wpdb->prefix . 'frmt_form_entry';
             $meta_table  = $wpdb->prefix . 'frmt_form_entry_meta';
 
-            // Discover form IDs from the WP posts table — stable across all Forminator
-            // versions and avoids the entry_type inconsistency that returns 0 results.
-            $form_ids = $wpdb->get_col(
-                "SELECT ID FROM {$wpdb->posts}
-                 WHERE post_type = 'forminator_forms' AND post_status = 'publish'
-                 ORDER BY ID ASC"
-            );
-            if (empty($form_ids)) return 'No published Forminator forms found.';
+            // Forminator_API::get_forms() returns objects whose ->id exactly matches
+            // the form_id column in frmt_form_entry. Use it for form discovery, then
+            // query entries via $wpdb to avoid the PHP 8 arithmetic bug in get_entries().
+            $forms = Forminator_API::get_forms();
+            if (empty($forms)) return 'No Forminator forms found.';
 
-            foreach ($form_ids as $form_id) {
-                $form_id    = (int)$form_id;
-                $form_title = get_the_title($form_id) ?: "Forminator #{$form_id}";
+            foreach ($forms as $form) {
+                $form_id    = (int)$form->id;
+                $form_title = $form->settings['formName'] ?? ('Forminator #' . $form_id);
                 $offset     = 0;
                 do {
                     $entries = $wpdb->get_results($wpdb->prepare(
