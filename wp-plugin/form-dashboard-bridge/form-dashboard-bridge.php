@@ -541,16 +541,18 @@ class Form_Dashboard_Bridge {
         try {
 
         if ($plugin === 'forminator') {
-            // Query Forminator DB tables directly — bypasses Forminator_API which has
-            // PHP 8 arithmetic incompatibilities in some versions.
             global $wpdb;
             $entry_table = $wpdb->prefix . 'frmt_form_entry';
             $meta_table  = $wpdb->prefix . 'frmt_form_entry_meta';
 
+            // Discover form IDs from the WP posts table — stable across all Forminator
+            // versions and avoids the entry_type inconsistency that returns 0 results.
             $form_ids = $wpdb->get_col(
-                "SELECT DISTINCT form_id FROM {$entry_table} WHERE entry_type = 'custom-forms' ORDER BY form_id ASC"
+                "SELECT ID FROM {$wpdb->posts}
+                 WHERE post_type = 'forminator_forms' AND post_status = 'publish'
+                 ORDER BY ID ASC"
             );
-            if (empty($form_ids)) return 'No Forminator entries found in the database.';
+            if (empty($form_ids)) return 'No published Forminator forms found.';
 
             foreach ($form_ids as $form_id) {
                 $form_id    = (int)$form_id;
@@ -559,7 +561,7 @@ class Form_Dashboard_Bridge {
                 do {
                     $entries = $wpdb->get_results($wpdb->prepare(
                         "SELECT id, form_id, ip, date_created FROM {$entry_table}
-                         WHERE form_id = %d AND entry_type = 'custom-forms'
+                         WHERE form_id = %d
                          ORDER BY id ASC LIMIT %d OFFSET %d",
                         $form_id, $page_size, $offset
                     ));
@@ -589,7 +591,7 @@ class Form_Dashboard_Bridge {
                     $offset += $page_size;
                 } while (count($entries) === $page_size);
             }
-            return "<strong>Forminator sync queued:</strong> $count entries dispatched to the dashboard. They will appear within a few seconds.";
+            return "<strong>Forminator sync queued:</strong> $count entries dispatched. They will appear in the dashboard within seconds.";
         }
 
         if ($plugin === 'gravity' && class_exists('GFAPI')) {
