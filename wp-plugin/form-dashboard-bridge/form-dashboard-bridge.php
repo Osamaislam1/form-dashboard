@@ -549,29 +549,30 @@ class Form_Dashboard_Bridge {
                 return "Forminator table not found: {$entry_table}";
             }
 
-            // Fetch all entries in one shot — no prepare(), no LIMIT/OFFSET, no ID mismatch.
-            // Integer casting on the table name prefix makes this SQL-injection safe.
+            // Fetch all entries — entry_id is the PK column in frmt_form_entry (not 'id').
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
             $all_entries = $wpdb->get_results(
-                "SELECT id, form_id, ip, date_created FROM {$entry_table} ORDER BY form_id, id ASC"
+                "SELECT entry_id, form_id, ip, date_created FROM {$entry_table} ORDER BY form_id, entry_id ASC"
             );
 
             if (empty($all_entries)) {
+                $get_error = $wpdb->last_error; // capture before next query clears it
                 $total = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$entry_table}");
-                return "Entry query returned empty (COUNT = {$total}, last_error: {$wpdb->last_error})";
+                return "Entry query returned empty (COUNT = {$total}, error: {$get_error})";
             }
 
-            // Group entries by form_id so we send the correct form title per entry.
             $form_titles = [];
             foreach ($all_entries as $entry) {
-                $fid = (int)$entry->form_id;
+                $fid      = (int)$entry->form_id;
+                $entry_id = (int)$entry->entry_id;
+
                 if (!isset($form_titles[$fid])) {
                     $form_titles[$fid] = get_the_title($fid) ?: "Forminator #{$fid}";
                 }
 
                 // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
                 $metas = $wpdb->get_results(
-                    "SELECT meta_key, meta_value FROM {$meta_table} WHERE entry_id = " . (int)$entry->id
+                    "SELECT meta_key, meta_value FROM {$meta_table} WHERE entry_id = {$entry_id}"
                 );
                 $fields = [];
                 foreach ((array)$metas as $m) {
@@ -582,7 +583,7 @@ class Form_Dashboard_Bridge {
                     'plugin'       => 'forminator',
                     'form_id'      => (string)$fid,
                     'form_title'   => $form_titles[$fid],
-                    'entry_id'     => (string)$entry->id,
+                    'entry_id'     => (string)$entry_id,
                     'submitted_at' => $entry->date_created ?? gmdate('c'),
                     'ip'           => $entry->ip ?? '',
                     'user_agent'   => '',
