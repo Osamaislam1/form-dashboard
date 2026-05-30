@@ -156,7 +156,7 @@ function togglePanel(id) {
     <thead>
         <tr>
             <th>Name</th><th>URL</th><th>Forms</th><th>Submissions</th>
-            <th>Status</th><th>Email</th><th>Last seen</th><?php if ($user['role']==='admin'): ?><th></th><?php endif; ?>
+            <th>Status</th><th>Email</th><th>Last seen</th><th>Plugin</th><?php if ($user['role']==='admin'): ?><th></th><?php endif; ?>
         </tr>
     </thead>
     <tbody>
@@ -203,6 +203,15 @@ function togglePanel(id) {
         </td>
         <td style="color:var(--text-dim); font-size:12px;">
             <?= $s['last_seen_at'] ? date('M j H:i', strtotime($s['last_seen_at'])) : '—' ?>
+        </td>
+        <td>
+            <?php if (!empty($s['plugin_version'])): ?>
+                <span class="pill ok" title="Seen: <?= e($s['plugin_version_seen_at'] ?? '') ?>">
+                    v<?= e($s['plugin_version']) ?>
+                </span>
+            <?php else: ?>
+                <span style="color:var(--text-faint)">—</span>
+            <?php endif; ?>
         </td>
         <?php if ($user['role']==='admin'): ?>
         <td style="text-align:right;min-width:220px;">

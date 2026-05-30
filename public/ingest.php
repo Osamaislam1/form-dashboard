@@ -106,8 +106,15 @@ if (($data['type'] ?? '') === 'email_health') {
 
 // ── Handle heartbeat payloads ────────────────────────────────────────────────
 if (($data['type'] ?? '') === 'heartbeat') {
-    $pdo->prepare('UPDATE sites SET last_seen_at = NOW(), last_heartbeat_at = NOW() WHERE id = ?')
-        ->execute([$site['id']]);
+    // Extract plugin_version from fields, sanitising to digits and dots only.
+    $pv = substr(preg_replace('/[^0-9.]/', '', (string)($data['fields']['plugin_version'] ?? '')), 0, 20) ?: null;
+
+    $pdo->prepare(
+        'UPDATE sites SET last_seen_at = NOW(), last_heartbeat_at = NOW(),
+         plugin_version         = COALESCE(?, plugin_version),
+         plugin_version_seen_at = IF(? IS NOT NULL, NOW(), plugin_version_seen_at)
+         WHERE id = ?'
+    )->execute([$pv, $pv, $site['id']]);
 
     $pdo->prepare('INSERT INTO webhook_log (site_id, status, message, ip) VALUES (?, "ok", ?, ?)')
         ->execute([$site['id'], 'heartbeat', $_SERVER['REMOTE_ADDR'] ?? null]);

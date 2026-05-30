@@ -546,7 +546,7 @@ class Form_Dashboard_Bridge {
             foreach ($forms as $form) {
                 $page = 0;
                 do {
-                    $entries = Forminator_API::get_entries($form->id, 'any', $page, $page_size);
+                    $entries = Forminator_API::get_entries((int)$form->id, 'any', (int)$page, (int)$page_size);
                     if (empty($entries)) break;
                     $page++;
                     foreach ($entries as $entry) {
@@ -571,7 +571,7 @@ class Form_Dashboard_Bridge {
                         ]);
                         $count++;
                     }
-                } while (count($entries) === $page_size);
+                } while (is_array($entries) && count($entries) === $page_size);
             }
             return "<strong>Forminator sync queued:</strong> $count entries dispatched to the dashboard. They will appear within a few seconds.";
         }
@@ -600,8 +600,8 @@ class Form_Dashboard_Bridge {
                     ]);
                     $count++;
                 }
-                $offset += $page_size;
-            } while (count($entries) === $page_size);
+                $offset += (int)$page_size;
+            } while (is_array($entries) && count($entries) === $page_size);
             return "<strong>Gravity Forms sync queued:</strong> $count entries dispatched to the dashboard.";
         }
 
@@ -610,7 +610,7 @@ class Form_Dashboard_Bridge {
             do {
                 $entries = wpforms()->entry->get_entries([
                     'number' => $page_size,
-                    'offset' => ($page - 1) * $page_size,
+                    'offset' => (int)(((int)$page - 1) * (int)$page_size),
                 ]);
                 if (empty($entries)) break;
                 foreach ($entries as $entry) {
@@ -634,7 +634,7 @@ class Form_Dashboard_Bridge {
                     $count++;
                 }
                 $page++;
-            } while (count($entries) === $page_size);
+            } while (is_array($entries) && count($entries) === $page_size);
             return "<strong>WPForms sync queued:</strong> $count entries dispatched to the dashboard.";
         }
 
