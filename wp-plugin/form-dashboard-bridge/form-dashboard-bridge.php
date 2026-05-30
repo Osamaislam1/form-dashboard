@@ -13,7 +13,7 @@ class Form_Dashboard_Bridge {
 
     const OPT            = 'fdash_settings';
     const VERSION        = '1.2.0';
-    const UPDATE_JSON_URL = 'https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/plugin-version.json';
+    const UPDATE_JSON_URL = 'https://raw.githubusercontent.com/Osamaislam1/form-dashboard/main/plugin-version.json';
 
     public static function init() {
         add_action('admin_menu', [__CLASS__, 'menu']);

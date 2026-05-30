@@ -35,10 +35,10 @@ jobs:
             "tested":       "6.6",
             "requires_php": "8.0",
             "last_updated": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "download_url": "https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/releases/download/${{ github.ref_name }}/form-dashboard-bridge.zip",
+            "download_url": "https://github.com/Osamaislam1/form-dashboard/releases/download/${{ github.ref_name }}/form-dashboard-bridge.zip",
             "sections": {
               "description": "Sends form submissions from this WordPress site to a central Form Dashboard.",
-              "changelog":   "See https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/releases/tag/${{ github.ref_name }}"
+              "changelog":   "See https://github.com/Osamaislam1/form-dashboard/releases/tag/${{ github.ref_name }}"
             }
           }
           EOF
