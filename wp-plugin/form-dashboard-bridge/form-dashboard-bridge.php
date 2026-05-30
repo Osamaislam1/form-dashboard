@@ -113,6 +113,10 @@ class Form_Dashboard_Bridge {
         $last_send     = get_option('fdash_last_send_result', null);
         $mailer        = self::detect_mailer();
         $freq          = $opt['email_frequency'] ?? 'daily';
+        $remote        = get_transient('fdash_update_check');
+        $has_update    = is_array($remote) && empty($remote['_error'])
+                         && isset($remote['version'])
+                         && version_compare($remote['version'], self::VERSION, '>');
         ?>
         <style>
         #fdash-wrap { max-width: 960px; }
@@ -302,6 +306,29 @@ class Form_Dashboard_Bridge {
             <!-- Header -->
             <div class="fdash-header">
                 <h1>Form Dashboard Bridge <span>v<?= self::VERSION ?></span></h1>
+
+                <?php if (is_array($remote) && empty($remote['_error']) && !empty($remote['version'])): ?>
+                    <span class="fdash-chip <?= $has_update ? 'fdash-chip-warn' : 'fdash-chip-ok' ?>">
+                        <?php if ($has_update): ?>
+                            &#8593; Update available: v<?= esc_html($remote['version']) ?>
+                        <?php else: ?>
+                            &#10003; Up to date (v<?= esc_html($remote['version']) ?> on GitHub)
+                        <?php endif; ?>
+                    </span>
+                    <?php if (!empty($remote['sections']['changelog'])): ?>
+                        <a href="<?= esc_url($remote['sections']['changelog']) ?>" target="_blank"
+                           style="color:#9aa3b2; font-size:12px; text-decoration:none;">
+                            Changelog &#8599;
+                        </a>
+                    <?php endif; ?>
+                    <?php if (!empty($remote['last_updated'])): ?>
+                        <span style="color:#6b7280; font-size:11px;">
+                            Released: <?= esc_html(date('M j, Y', strtotime($remote['last_updated']))) ?>
+                        </span>
+                    <?php endif; ?>
+                <?php elseif (!$remote): ?>
+                    <span class="fdash-chip fdash-chip-info">&#128260; Version check pending</span>
+                <?php endif; ?>
 
                 <?php if ($last_send): ?>
                     <span class="fdash-chip <?= $last_send['ok'] ? 'fdash-chip-ok' : 'fdash-chip-warn' ?>">
@@ -1104,6 +1131,12 @@ class Form_Dashboard_Bridge {
             add_action('wp_mail_failed', $error_handler);
             $result = wp_mail($to, $subject, $body);
             remove_action('wp_mail_failed', $error_handler);
+
+            // Some mailers (e.g. Post SMTP) fail without firing wp_mail_failed with an error string.
+            // Provide a useful fallback so the dashboard shows actionable information.
+            if (!$result && $error_msg === null) {
+                $error_msg = 'wp_mail() returned false. Check SMTP credentials and configuration in ' . $mailer . '.';
+            }
         }
 
         $status = $send_email ? ($result ? 'ok' : 'fail') : 'config_only';

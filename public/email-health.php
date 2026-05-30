@@ -106,7 +106,7 @@ require __DIR__ . '/../src/layout.php';
                 <strong><?= e($f['name']) ?></strong>
                 <div style="color:var(--text-faint); font-size:11px;"><?= e($f['url']) ?></div>
             </td>
-            <td style="color:var(--err); font-size:12px;"><?= e($f['email_error'] ?: 'Unknown error') ?></td>
+            <td style="color:var(--err); font-size:12px;"><?= e($f['email_error'] ?: 'wp_mail() failed — no error details captured by the mailer') ?></td>
             <td style="font-size:12px; color:var(--text-dim);"><?= e($f['mailer'] ?: '—') ?></td>
             <td style="font-size:12px; color:var(--text-dim);">
                 <?= $f['email_checked_at'] ? date('M j, Y H:i', strtotime($f['email_checked_at'])) : '—' ?>
