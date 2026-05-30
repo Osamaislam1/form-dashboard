@@ -107,193 +107,394 @@ class Form_Dashboard_Bridge {
             $resync_result = 'Resync check complete. If a resync was pending, it has been processed.';
         }
 
-        $queue_depth = count(get_option('fdash_retry_queue', []));
-        $dead_count  = count(get_option('fdash_dead_letter', []));
+        $queue_depth   = count(get_option('fdash_retry_queue', []));
+        $dead_count    = count(get_option('fdash_dead_letter', []));
         $cron_disabled = defined('DISABLE_WP_CRON') && DISABLE_WP_CRON;
+        $last_send     = get_option('fdash_last_send_result', null);
+        $mailer        = self::detect_mailer();
+        $freq          = $opt['email_frequency'] ?? 'daily';
         ?>
-        <div class="wrap">
-            <h1>Form Dashboard Bridge <span style="font-size:13px;font-weight:normal;color:#888;">v<?= self::VERSION ?></span></h1>
+        <style>
+        #fdash-wrap { max-width: 960px; }
+        #fdash-wrap * { box-sizing: border-box; }
+
+        /* ── Header ── */
+        .fdash-header {
+            background: #1d2327;
+            color: #f0f0f1;
+            padding: 20px 28px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .fdash-header h1 {
+            color: #f0f0f1;
+            font-size: 18px;
+            margin: 0;
+            padding: 0;
+            border: none;
+            flex: 1;
+        }
+        .fdash-header h1 span {
+            font-size: 12px;
+            font-weight: 400;
+            opacity: .6;
+            margin-left: 6px;
+        }
+        .fdash-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .fdash-chip-ok   { background: rgba(0,163,42,.18); color: #6dda85; }
+        .fdash-chip-warn { background: rgba(220,133,0,.18); color: #f0b849; }
+        .fdash-chip-err  { background: rgba(220,50,50,.18);  color: #f87171; }
+        .fdash-chip-info { background: rgba(255,255,255,.1); color: #c3c4c7; }
+
+        /* ── Cards ── */
+        .fdash-card {
+            background: #fff;
+            border: 1px solid #dcdcde;
+            border-radius: 6px;
+            padding: 0;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 2px rgba(0,0,0,.06);
+        }
+        .fdash-card-head {
+            padding: 16px 24px;
+            border-bottom: 1px solid #dcdcde;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .fdash-card-head h2 {
+            font-size: 14px;
+            font-weight: 600;
+            margin: 0;
+            padding: 0;
+            color: #1d2327;
+        }
+        .fdash-card-head .fdash-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        .fdash-icon-blue  { background: #e8f0fe; }
+        .fdash-icon-green { background: #e6f4ea; }
+        .fdash-icon-purple{ background: #f3e8fd; }
+        .fdash-card-body  { padding: 20px 24px; }
+
+        /* ── Form rows ── */
+        .fdash-row {
+            display: grid;
+            grid-template-columns: 180px 1fr;
+            gap: 12px 20px;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f1;
+        }
+        .fdash-row:last-child { border-bottom: none; }
+        .fdash-row label { font-size: 13px; font-weight: 500; color: #3c434a; }
+        .fdash-row .fdash-desc { font-size: 12px; color: #787c82; margin-top: 3px; }
+        .fdash-row input[type=url],
+        .fdash-row input[type=text],
+        .fdash-row input[type=email],
+        .fdash-row input[type=password],
+        .fdash-row select {
+            width: 100%;
+            max-width: 420px;
+            border-radius: 4px;
+            border: 1px solid #8c8f94;
+            padding: 6px 10px;
+            font-size: 13px;
+            color: #1d2327;
+        }
+        .fdash-row input:focus,
+        .fdash-row select:focus { border-color: #2271b1; box-shadow: 0 0 0 1px #2271b1; outline: none; }
+
+        /* ── Toggle checkbox ── */
+        .fdash-toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+        .fdash-toggle input[type=checkbox] { width: 36px; height: 20px; cursor: pointer; accent-color: #00a32a; }
+        .fdash-toggle-label { font-size: 13px; color: #1d2327; }
+
+        /* ── Save button row ── */
+        .fdash-save-row { padding: 16px 24px; background: #f6f7f7; border-top: 1px solid #dcdcde; border-radius: 0 0 6px 6px; }
+
+        /* ── Tools grid ── */
+        .fdash-tools {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-top: 8px;
+        }
+        .fdash-tool-card {
+            background: #fff;
+            border: 1px solid #dcdcde;
+            border-radius: 6px;
+            padding: 20px;
+            box-shadow: 0 1px 2px rgba(0,0,0,.06);
+        }
+        .fdash-tool-card h3 {
+            font-size: 13px;
+            font-weight: 600;
+            margin: 0 0 6px;
+            color: #1d2327;
+        }
+        .fdash-tool-card p {
+            font-size: 12px;
+            color: #787c82;
+            margin: 0 0 14px;
+            line-height: 1.5;
+        }
+        .fdash-tool-card select {
+            width: 100%;
+            margin-bottom: 10px;
+            border: 1px solid #8c8f94;
+            border-radius: 4px;
+            padding: 5px 8px;
+            font-size: 12px;
+        }
+        .fdash-tool-card .button { width: 100%; text-align: center; }
+        .fdash-tool-result {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .fdash-tool-result.ok   { background:#edfaef; border:1px solid #c6e8cb; color:#1a5c27; }
+        .fdash-tool-result.err  { background:#fdf0f0; border:1px solid #f5c2c2; color:#8b1a1a; }
+        .fdash-tool-result.info { background:#f0f6fd; border:1px solid #c2d8f5; color:#1a3a5c; }
+
+        /* ── Section label ── */
+        .fdash-section-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            color: #787c82;
+            margin: 24px 0 10px;
+        }
+        </style>
+
+        <div id="fdash-wrap" class="wrap">
 
             <?php if ($cron_disabled): ?>
-            <div class="notice notice-warning"><p><strong>Warning:</strong> <code>DISABLE_WP_CRON</code> is set. Automatic retries and email health checks will not run. Configure a real server cron to call <code>wp-cron.php</code>.</p></div>
+            <div class="notice notice-warning"><p><strong>Warning:</strong> <code>DISABLE_WP_CRON</code> is set. Configure a real server cron to call <code>wp-cron.php</code> for retries and health checks to run.</p></div>
             <?php endif; ?>
-
-            <?php if ($queue_depth > 0): ?>
-            <div class="notice notice-warning"><p><strong>Retry queue:</strong> <?= $queue_depth ?> pending item<?= $queue_depth !== 1 ? 's' : '' ?>.</p></div>
-            <?php endif; ?>
-
             <?php if ($dead_count > 0): ?>
-            <div class="notice notice-error"><p><strong>Dead letter queue:</strong> <?= $dead_count ?> submission<?= $dead_count !== 1 ? 's' : '' ?> permanently failed and were reported to the dashboard. Check your dashboard dead letter log.</p></div>
+            <div class="notice notice-error"><p><strong>Dead letter:</strong> <?= $dead_count ?> submission<?= $dead_count !== 1 ? 's' : '' ?> permanently failed. Check your dashboard dead letter log.</p></div>
             <?php endif; ?>
 
-            <?php
-            $last_send = get_option('fdash_last_send_result', null);
-            if ($last_send): $ago = human_time_diff($last_send['time']); ?>
-            <div class="notice notice-<?= $last_send['ok'] ? 'success' : 'warning' ?> is-dismissible">
-                <p><strong>Last send:</strong> <?= esc_html($ago) ?> ago &mdash;
-                <?php if ($last_send['ok']): ?>
-                    HTTP <?= esc_html($last_send['code']) ?> OK (<?= esc_html($last_send['plugin']) ?>)
-                <?php else: ?>
-                    Failed (code <?= esc_html($last_send['code']) ?>): <?= esc_html($last_send['error']) ?>
+            <!-- Header -->
+            <div class="fdash-header">
+                <h1>Form Dashboard Bridge <span>v<?= self::VERSION ?></span></h1>
+
+                <?php if ($last_send): ?>
+                    <span class="fdash-chip <?= $last_send['ok'] ? 'fdash-chip-ok' : 'fdash-chip-warn' ?>">
+                        <?= $last_send['ok'] ? '&#10003;' : '&#9888;' ?>
+                        Last send: <?= esc_html(human_time_diff($last_send['time'])) ?> ago
+                    </span>
                 <?php endif; ?>
-                </p>
-            </div>
-            <?php endif; ?>
 
+                <?php if ($queue_depth > 0): ?>
+                    <span class="fdash-chip fdash-chip-warn">&#9203; <?= $queue_depth ?> queued</span>
+                <?php endif; ?>
+
+                <span class="fdash-chip fdash-chip-info">&#9993; <?= esc_html($mailer) ?></span>
+            </div>
+
+            <!-- Settings form -->
             <form method="post" action="options.php">
                 <?php settings_fields('fdash_group'); ?>
-                <table class="form-table">
-                    <tr>
-                        <th>Ingest endpoint</th>
-                        <td><input type="url" name="<?= self::OPT ?>[endpoint]"
-                            value="<?= esc_attr($opt['endpoint'] ?? '') ?>" class="regular-text"
-                            placeholder="https://your-dashboard.example.com/ingest.php"></td>
-                    </tr>
-                    <tr>
-                        <th>API key</th>
-                        <td><input type="text" name="<?= self::OPT ?>[api_key]"
-                            value="<?= esc_attr($opt['api_key'] ?? '') ?>" class="regular-text"></td>
-                    </tr>
-                    <tr>
-                        <th>Email monitoring</th>
-                        <td>
-                            <label>
+
+                <!-- Connection card -->
+                <div class="fdash-card">
+                    <div class="fdash-card-head">
+                        <div class="fdash-icon fdash-icon-blue">&#128279;</div>
+                        <h2>Connection</h2>
+                    </div>
+                    <div class="fdash-card-body">
+                        <div class="fdash-row">
+                            <label>Dashboard URL</label>
+                            <div>
+                                <input type="url" name="<?= self::OPT ?>[endpoint]"
+                                    value="<?= esc_attr($opt['endpoint'] ?? '') ?>"
+                                    placeholder="https://your-dashboard.example.com/ingest.php">
+                                <div class="fdash-desc">Full URL to your dashboard&rsquo;s ingest.php endpoint.</div>
+                            </div>
+                        </div>
+                        <div class="fdash-row">
+                            <label>API Key</label>
+                            <div>
+                                <input type="text" name="<?= self::OPT ?>[api_key]"
+                                    value="<?= esc_attr($opt['api_key'] ?? '') ?>"
+                                    placeholder="Paste from dashboard">
+                            </div>
+                        </div>
+                        <div class="fdash-row">
+                            <label>Secret</label>
+                            <div>
+                                <input type="password" name="<?= self::OPT ?>[secret]"
+                                    value="<?= esc_attr($opt['secret'] ?? '') ?>"
+                                    placeholder="Paste from dashboard">
+                                <div class="fdash-desc">Both values are shown once when you add the site in the dashboard.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Email monitoring card -->
+                <div class="fdash-card">
+                    <div class="fdash-card-head">
+                        <div class="fdash-icon fdash-icon-green">&#9993;</div>
+                        <h2>Email Monitoring</h2>
+                    </div>
+                    <div class="fdash-card-body">
+                        <div class="fdash-row">
+                            <label>Health checks</label>
+                            <label class="fdash-toggle">
                                 <input type="checkbox" name="<?= self::OPT ?>[email_monitor]" value="1"
                                     <?= !empty($opt['email_monitor']) ? 'checked' : '' ?>>
-                                Enable email health checks
+                                <span class="fdash-toggle-label">Enable automated email health checks</span>
                             </label>
-                            <p class="description">Detected mailer: <strong><?= esc_html(self::detect_mailer()) ?></strong></p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Test email recipient</th>
-                        <td>
-                            <input type="email" name="<?= self::OPT ?>[email_test_to]"
-                                value="<?= esc_attr($opt['email_test_to'] ?? get_option('admin_email')) ?>" class="regular-text"
-                                placeholder="<?= esc_attr(get_option('admin_email')) ?>">
-                            <p class="description">Where to send the test email. Defaults to admin email if left blank.</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Check frequency</th>
-                        <td>
-                            <?php $freq = $opt['email_frequency'] ?? 'daily'; ?>
+                        </div>
+                        <div class="fdash-row">
+                            <label>Test recipient</label>
+                            <div>
+                                <input type="email" name="<?= self::OPT ?>[email_test_to]"
+                                    value="<?= esc_attr($opt['email_test_to'] ?? get_option('admin_email')) ?>"
+                                    placeholder="<?= esc_attr(get_option('admin_email')) ?>">
+                                <div class="fdash-desc">Detected mailer: <strong><?= esc_html($mailer) ?></strong></div>
+                            </div>
+                        </div>
+                        <div class="fdash-row">
+                            <label>Check frequency</label>
                             <select name="<?= self::OPT ?>[email_frequency]">
-                                <option value="hourly" <?= $freq === 'hourly' ? 'selected' : '' ?>>Every hour</option>
-                                <option value="twicedaily" <?= $freq === 'twicedaily' ? 'selected' : '' ?>>Twice a day</option>
-                                <option value="daily" <?= $freq === 'daily' ? 'selected' : '' ?>>Once a day</option>
+                                <option value="hourly"    <?= $freq === 'hourly'    ? 'selected' : '' ?>>Every hour</option>
+                                <option value="twicedaily"<?= $freq === 'twicedaily'? 'selected' : '' ?>>Twice a day</option>
+                                <option value="daily"     <?= $freq === 'daily'     ? 'selected' : '' ?>>Once a day</option>
                             </select>
-                            <p class="description">How often to run the automated email health check.</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Auto-updates</th>
-                        <td>
-                            <label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Updates card -->
+                <div class="fdash-card">
+                    <div class="fdash-card-head">
+                        <div class="fdash-icon fdash-icon-purple">&#8593;</div>
+                        <h2>Updates</h2>
+                    </div>
+                    <div class="fdash-card-body">
+                        <div class="fdash-row">
+                            <label>Auto-update</label>
+                            <label class="fdash-toggle">
                                 <input type="checkbox" name="<?= self::OPT ?>[auto_update]" value="1"
                                     <?= ($opt['auto_update'] ?? '1') !== '0' ? 'checked' : '' ?>>
-                                Automatically install plugin updates when a new version is released
+                                <span class="fdash-toggle-label">Automatically install new versions when released</span>
                             </label>
-                            <p class="description">When enabled, WordPress silently updates this plugin without any admin action. When disabled, updates appear in the Plugins screen but require a manual click.</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Secret</th>
-                        <td><input type="password" name="<?= self::OPT ?>[secret]"
-                            value="<?= esc_attr($opt['secret'] ?? '') ?>" class="regular-text">
-                            <p class="description">Both values come from the dashboard when you add the site.</p>
-                        </td>
-                    </tr>
-                </table>
-                <?php submit_button(); ?>
+                        </div>
+                    </div>
+                    <div class="fdash-save-row">
+                        <?php submit_button('Save Settings', 'primary', 'submit', false); ?>
+                    </div>
+                </div>
+
             </form>
 
-            <hr>
+            <!-- Tools -->
+            <div class="fdash-section-label">Tools</div>
+            <div class="fdash-tools">
 
-            <div style="display: flex; gap: 40px;">
-                <div style="flex: 1;">
-                    <h2>Connection test</h2>
+                <!-- Test connection -->
+                <div class="fdash-tool-card">
+                    <h3>&#128272; Connection Test</h3>
+                    <p>Send a test ping to verify the dashboard can receive data from this site.</p>
                     <form method="post">
                         <?php wp_nonce_field('fdash_test'); ?>
                         <input type="hidden" name="fdash_test" value="1">
-                        <?php submit_button('Send test ping', 'secondary'); ?>
+                        <input type="submit" class="button button-secondary" value="Send Test Ping">
                     </form>
                     <?php if ($test !== null): ?>
-                        <div class="notice notice-<?= $test['ok'] ? 'success' : 'error' ?> inline">
-                            <p><strong>HTTP <?= esc_html($test['code']) ?></strong>: <?= esc_html($test['body']) ?></p>
+                        <div class="fdash-tool-result <?= $test['ok'] ? 'ok' : 'err' ?>">
+                            <strong>HTTP <?= esc_html($test['code']) ?></strong> &mdash; <?= esc_html($test['body']) ?>
                         </div>
                     <?php endif; ?>
                 </div>
 
-                <div style="flex: 1; border-left: 1px solid #ccc; padding-left: 40px;">
-                    <h2>Bulk Sync Historical Data</h2>
-                    <p class="description">Push existing entries from your local database to the dashboard. This only needs to be done once per plugin.</p>
-
+                <!-- Bulk sync -->
+                <div class="fdash-tool-card">
+                    <h3>&#128257; Bulk Sync</h3>
+                    <p>Push existing historical entries from this site to the dashboard. Run once per form plugin.</p>
                     <form method="post">
                         <?php wp_nonce_field('fdash_bulk_sync'); ?>
                         <select name="sync_plugin" required>
-                            <option value="">-- Select Plugin --</option>
+                            <option value="">Select plugin&hellip;</option>
                             <?php if (class_exists('Forminator_API')): ?><option value="forminator">Forminator</option><?php endif; ?>
-                            <?php if (defined('WPCF7_VERSION')): ?><option value="cf7" disabled>Contact Form 7 (Not stored in DB)</option><?php endif; ?>
+                            <?php if (defined('WPCF7_VERSION')): ?><option value="cf7" disabled>CF7 (no DB storage)</option><?php endif; ?>
                             <?php if (class_exists('GFAPI')): ?><option value="gravity">Gravity Forms</option><?php endif; ?>
                             <?php if (function_exists('wpforms')): ?><option value="wpforms">WPForms</option><?php endif; ?>
                         </select>
                         <input type="hidden" name="fdash_bulk_sync" value="1">
-                        <?php submit_button('Sync Historical Entries', 'secondary', 'submit', false); ?>
+                        <input type="submit" class="button button-secondary" value="Sync Historical Entries">
                     </form>
-
                     <?php if ($sync_result): ?>
-                        <div class="notice notice-info inline" style="margin-top: 15px;">
-                            <p><?= wp_kses_post($sync_result) ?></p>
-                        </div>
+                        <div class="fdash-tool-result info"><?= wp_kses_post($sync_result) ?></div>
                     <?php endif; ?>
                 </div>
 
-                <div style="flex: 1; border-left: 1px solid #ccc; padding-left: 40px;">
-                    <h2>Check for Resync Request</h2>
-                    <p class="description">Polls the dashboard to see if a resync was requested. The daily heartbeat does this automatically; use this button to check immediately.</p>
+                <!-- Resync check -->
+                <div class="fdash-tool-card">
+                    <h3>&#128260; Resync Check</h3>
+                    <p>Polls the dashboard to process any pending resync request immediately, without waiting for the hourly heartbeat.</p>
                     <form method="post">
                         <?php wp_nonce_field('fdash_check_resync'); ?>
                         <input type="hidden" name="fdash_check_resync" value="1">
-                        <?php submit_button('Check Now', 'secondary', 'submit', false); ?>
+                        <input type="submit" class="button button-secondary" value="Check Now">
                     </form>
                     <?php if ($resync_result !== null): ?>
-                        <div class="notice notice-info inline" style="margin-top: 15px;">
-                            <p><?= esc_html($resync_result) ?></p>
-                        </div>
+                        <div class="fdash-tool-result info"><?= esc_html($resync_result) ?></div>
                     <?php endif; ?>
                 </div>
 
-                <div style="flex: 1; border-left: 1px solid #ccc; padding-left: 40px;">
-                    <h2>Email Health Check</h2>
-                    <p class="description">Test whether <code>wp_mail()</code> is working on this site and report to the dashboard.</p>
-                    <p class="description">Detected mailer: <strong><?= esc_html(self::detect_mailer()) ?></strong></p>
-
+                <!-- Email health -->
+                <div class="fdash-tool-card">
+                    <h3>&#128140; Email Health</h3>
+                    <p>Test <code>wp_mail()</code> on this site and report the result to the dashboard.</p>
                     <form method="post">
                         <?php wp_nonce_field('fdash_email_test'); ?>
                         <input type="hidden" name="fdash_email_test" value="1">
-                        <?php submit_button('Test Email Now', 'secondary', 'submit', false); ?>
+                        <input type="submit" class="button button-secondary" value="Test Email Now">
                     </form>
-
                     <?php if ($email_test !== null): ?>
-                        <div class="notice notice-<?= $email_test['mail_ok'] ? 'success' : 'error' ?> inline" style="margin-top: 15px;">
-                            <p>
-                                <strong>wp_mail():</strong> <?= $email_test['mail_ok'] ? '&#10003; Sent successfully' : '&#10007; Failed' ?><br>
-                                <?php if (!$email_test['mail_ok'] && $email_test['error']): ?>
-                                    <strong>Error:</strong> <?= esc_html($email_test['error']) ?><br>
-                                <?php endif; ?>
-                                <strong>Dashboard report:</strong>
-                                <?php if ($email_test['report_ok']): ?>
-                                    &#10003; HTTP <?= esc_html($email_test['report_code']) ?>
-                                <?php else: ?>
-                                    &#10007; <?= esc_html($email_test['report_body']) ?>
-                                <?php endif; ?>
-                            </p>
+                        <div class="fdash-tool-result <?= $email_test['mail_ok'] ? 'ok' : 'err' ?>">
+                            <strong>wp_mail():</strong> <?= $email_test['mail_ok'] ? '&#10003; Sent' : '&#10007; Failed' ?><br>
+                            <?php if (!$email_test['mail_ok'] && $email_test['error']): ?>
+                                <?= esc_html($email_test['error']) ?><br>
+                            <?php endif; ?>
+                            <strong>Report:</strong>
+                            <?= $email_test['report_ok']
+                                ? '&#10003; HTTP ' . esc_html($email_test['report_code'])
+                                : '&#10007; ' . esc_html($email_test['report_body']) ?>
                         </div>
                     <?php endif; ?>
                 </div>
-            </div>
-        </div>
+
+            </div><!-- .fdash-tools -->
+        </div><!-- #fdash-wrap -->
         <?php
     }
 
