@@ -540,38 +540,54 @@ class Form_Dashboard_Bridge {
 
         try {
 
-        if ($plugin === 'forminator' && class_exists('Forminator_API')) {
-            $forms = Forminator_API::get_forms();
-            if (empty($forms)) return 'No Forminator forms found.';
-            foreach ($forms as $form) {
-                $page = 0;
+        if ($plugin === 'forminator') {
+            // Query Forminator DB tables directly — bypasses Forminator_API which has
+            // PHP 8 arithmetic incompatibilities in some versions.
+            global $wpdb;
+            $entry_table = $wpdb->prefix . 'frmt_form_entry';
+            $meta_table  = $wpdb->prefix . 'frmt_form_entry_meta';
+
+            $form_ids = $wpdb->get_col(
+                "SELECT DISTINCT form_id FROM {$entry_table} WHERE entry_type = 'custom-forms' ORDER BY form_id ASC"
+            );
+            if (empty($form_ids)) return 'No Forminator entries found in the database.';
+
+            foreach ($form_ids as $form_id) {
+                $form_id    = (int)$form_id;
+                $form_title = get_the_title($form_id) ?: "Forminator #{$form_id}";
+                $offset     = 0;
                 do {
-                    $entries = Forminator_API::get_entries((int)$form->id, 'any', (int)$page, (int)$page_size);
+                    $entries = $wpdb->get_results($wpdb->prepare(
+                        "SELECT id, form_id, ip, date_created FROM {$entry_table}
+                         WHERE form_id = %d AND entry_type = 'custom-forms'
+                         ORDER BY id ASC LIMIT %d OFFSET %d",
+                        $form_id, $page_size, $offset
+                    ));
                     if (empty($entries)) break;
-                    $page++;
+
                     foreach ($entries as $entry) {
+                        $metas = $wpdb->get_results($wpdb->prepare(
+                            "SELECT meta_key, meta_value FROM {$meta_table} WHERE entry_id = %d",
+                            (int)$entry->id
+                        ));
                         $fields = [];
-                        if (!empty($entry->meta_data) && is_array($entry->meta_data)) {
-                            foreach ($entry->meta_data as $key => $meta) {
-                                $val = $meta['value'] ?? '';
-                                $fields[$key] = is_array($val) ? wp_json_encode($val) : (string)$val;
-                            }
+                        foreach ((array)$metas as $m) {
+                            $fields[$m->meta_key] = $m->meta_value;
                         }
                         self::send_bulk([
                             'plugin'       => 'forminator',
-                            'form_id'      => (string)$form->id,
-                            'form_title'   => $form->settings['formName'] ?? ('Forminator #' . $form->id),
-                            'entry_id'     => (string)$entry->entry_id,
-                            'submitted_at' => !empty($entry->date_created_sql)
-                                ? $entry->date_created_sql
-                                : (!empty($entry->date_created) ? $entry->date_created : gmdate('c')),
+                            'form_id'      => (string)$form_id,
+                            'form_title'   => $form_title,
+                            'entry_id'     => (string)$entry->id,
+                            'submitted_at' => $entry->date_created ?? gmdate('c'),
                             'ip'           => $entry->ip ?? '',
                             'user_agent'   => '',
                             'fields'       => $fields,
                         ]);
                         $count++;
                     }
-                } while (is_array($entries) && count($entries) === $page_size);
+                    $offset += $page_size;
+                } while (count($entries) === $page_size);
             }
             return "<strong>Forminator sync queued:</strong> $count entries dispatched to the dashboard. They will appear within a few seconds.";
         }
@@ -639,7 +655,8 @@ class Form_Dashboard_Bridge {
         }
 
         } catch (\Throwable $e) {
-            return 'Sync failed: ' . esc_html($e->getMessage());
+            return 'Sync failed: ' . esc_html($e->getMessage())
+                . ' — in ' . esc_html(basename($e->getFile())) . ':' . (int)$e->getLine();
         }
 
         return "Sync logic for this plugin is not yet implemented or the plugin is inactive.";
