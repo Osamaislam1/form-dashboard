@@ -500,17 +500,51 @@ class Form_Dashboard_Bridge {
 
     /* ===== Bulk Sync Handlers ===== */
 
+    /**
+     * Sends a payload non-blocking (fire-and-forget) for bulk operations.
+     * Does not wait for the dashboard to respond, so it can't report per-entry
+     * errors, but it avoids PHP timeout on large datasets. The dashboard
+     * deduplicates by entry_id so re-running the sync is always safe.
+     */
+    private static function send_bulk(array $payload): void {
+        $opt = get_option(self::OPT, []);
+        if (empty($opt['endpoint']) || empty($opt['api_key']) || empty($opt['secret'])) return;
+
+        $body = wp_json_encode($payload);
+        $ts   = (string)time();
+        $sig  = hash_hmac('sha256', $ts . '.' . $body, $opt['secret']);
+
+        wp_remote_post($opt['endpoint'], [
+            'headers'   => [
+                'Content-Type'      => 'application/json',
+                'X-FDASH-Key'       => $opt['api_key'],
+                'X-FDASH-Signature' => $sig,
+                'X-FDASH-Timestamp' => $ts,
+            ],
+            'body'      => $body,
+            'timeout'   => 5,
+            'blocking'  => false,
+            'sslverify' => true,
+        ]);
+    }
+
     public static function handle_bulk_sync($plugin) {
         if (empty($plugin)) return "Please select a plugin.";
 
-        $count = 0;
-        $errors = 0;
+        // Give the sync as much runway as the host allows.
+        @set_time_limit(300);
+        @ini_set('memory_limit', '256M');
+
+        $count     = 0;
+        $page_size = 50;
+
+        try {
 
         if ($plugin === 'forminator' && class_exists('Forminator_API')) {
             $forms = Forminator_API::get_forms();
+            if (empty($forms)) return 'No Forminator forms found.';
             foreach ($forms as $form) {
-                $page      = 0;
-                $page_size = 100;
+                $page = 0;
                 do {
                     $entries = Forminator_API::get_entries($form->id, 'any', $page, $page_size);
                     if (empty($entries)) break;
@@ -523,8 +557,7 @@ class Form_Dashboard_Bridge {
                                 $fields[$key] = is_array($val) ? wp_json_encode($val) : (string)$val;
                             }
                         }
-
-                        $res = self::send([
+                        self::send_bulk([
                             'plugin'       => 'forminator',
                             'form_id'      => (string)$form->id,
                             'form_title'   => $form->settings['formName'] ?? ('Forminator #' . $form->id),
@@ -536,29 +569,26 @@ class Form_Dashboard_Bridge {
                             'user_agent'   => '',
                             'fields'       => $fields,
                         ]);
-
-                        if ($res['ok']) $count++; else $errors++;
+                        $count++;
                     }
                 } while (count($entries) === $page_size);
             }
-            return "<strong>Forminator Sync Complete:</strong> Successfully pushed $count entries. ($errors failed)";
+            return "<strong>Forminator sync queued:</strong> $count entries dispatched to the dashboard. They will appear within a few seconds.";
         }
 
         if ($plugin === 'gravity' && class_exists('GFAPI')) {
-            $page_size = 100;
-            $offset    = 0;
+            $offset = 0;
             do {
-                $paging  = ['offset' => $offset, 'page_size' => $page_size];
-                $entries = GFAPI::get_entries(0, [], null, $paging);
+                $entries = GFAPI::get_entries(0, [], null, ['offset' => $offset, 'page_size' => $page_size]);
+                if (empty($entries)) break;
                 foreach ($entries as $entry) {
-                    $form = GFAPI::get_form($entry['form_id']);
+                    $form   = GFAPI::get_form($entry['form_id']);
                     $fields = [];
                     foreach ($form['fields'] as $f) {
-                        $label = $f->label ?: ('field_' . $f->id);
-                        $val = rgar($entry, (string)$f->id);
-                        $fields[$label] = (string)$val;
+                        $label          = $f->label ?: ('field_' . $f->id);
+                        $fields[$label] = (string)rgar($entry, (string)$f->id);
                     }
-                    $res = self::send([
+                    self::send_bulk([
                         'plugin'       => 'gravity',
                         'form_id'      => (string)$entry['form_id'],
                         'form_title'   => $form['title'],
@@ -568,20 +598,19 @@ class Form_Dashboard_Bridge {
                         'user_agent'   => $entry['user_agent'],
                         'fields'       => $fields,
                     ]);
-                    if ($res['ok']) $count++; else $errors++;
+                    $count++;
                 }
                 $offset += $page_size;
             } while (count($entries) === $page_size);
-            return "<strong>Gravity Forms Sync Complete:</strong> Successfully pushed $count entries. ($errors failed)";
+            return "<strong>Gravity Forms sync queued:</strong> $count entries dispatched to the dashboard.";
         }
 
         if ($plugin === 'wpforms' && function_exists('wpforms')) {
-            $page     = 1;
-            $per_page = 100;
+            $page = 1;
             do {
                 $entries = wpforms()->entry->get_entries([
-                    'number' => $per_page,
-                    'offset' => ($page - 1) * $per_page,
+                    'number' => $page_size,
+                    'offset' => ($page - 1) * $page_size,
                 ]);
                 if (empty($entries)) break;
                 foreach ($entries as $entry) {
@@ -592,7 +621,7 @@ class Form_Dashboard_Bridge {
                         $label      = $f['name'] ?? ('field_' . ($f['id'] ?? '?'));
                         $out[$label] = is_array($f['value'] ?? '') ? wp_json_encode($f['value']) : (string)($f['value'] ?? '');
                     }
-                    $res = self::send([
+                    self::send_bulk([
                         'plugin'       => 'wpforms',
                         'form_id'      => (string)$entry->form_id,
                         'form_title'   => $form_data['settings']['form_title'] ?? ('WPForms #' . $entry->form_id),
@@ -602,11 +631,15 @@ class Form_Dashboard_Bridge {
                         'user_agent'   => $entry->user_agent ?? '',
                         'fields'       => $out,
                     ]);
-                    if ($res['ok']) $count++; else $errors++;
+                    $count++;
                 }
                 $page++;
-            } while (count($entries) === $per_page);
-            return "<strong>WPForms Sync Complete:</strong> Successfully pushed $count entries. ($errors failed)";
+            } while (count($entries) === $page_size);
+            return "<strong>WPForms sync queued:</strong> $count entries dispatched to the dashboard.";
+        }
+
+        } catch (\Throwable $e) {
+            return 'Sync failed: ' . esc_html($e->getMessage());
         }
 
         return "Sync logic for this plugin is not yet implemented or the plugin is inactive.";
