@@ -64,8 +64,17 @@ $pdo = db();
 
 // ── Handle email health check payloads ──────────────────────────────────────
 if (($data['type'] ?? '') === 'email_health') {
-    $fields = is_array($data['fields'] ?? null) ? $data['fields'] : [];
-    $status = ($fields['status'] ?? '') === 'ok' ? 'ok' : 'fail';
+    $fields     = is_array($data['fields'] ?? null) ? $data['fields'] : [];
+    $raw_status = $fields['status'] ?? '';
+
+    // 'config_only' means cron ran but skipped sending — nothing to record.
+    if ($raw_status === 'config_only') {
+        http_response_code(200);
+        echo json_encode(['ok' => true, 'type' => 'email_health', 'note' => 'config_only skipped']);
+        exit;
+    }
+
+    $status = $raw_status === 'ok' ? 'ok' : 'fail';
     $error  = substr((string)($fields['error'] ?? ''), 0, 500) ?: null;
     $mailer = substr((string)($fields['mailer'] ?? ''), 0, 100) ?: null;
 

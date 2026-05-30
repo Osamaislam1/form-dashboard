@@ -1180,7 +1180,7 @@ class Form_Dashboard_Bridge {
     public static function run_email_health_cron(): void {
         $opt = get_option(self::OPT, []);
         if (empty($opt['email_monitor'])) return;
-        self::check_email_health(true, false);
+        self::check_email_health(true);
     }
 
     public static function schedule_email_health(): void {
