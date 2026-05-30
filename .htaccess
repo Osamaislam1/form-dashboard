@@ -1,0 +1,44 @@
+# ------------------------------------------------------------------------------
+# | Form Dashboard - Deployment Configuration                                  |
+# ------------------------------------------------------------------------------
+
+# 1. Basic Security & Environment
+Options -Indexes +FollowSymLinks
+DirectoryIndex public/index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    
+    # Optional: Force HTTPS
+    # RewriteCond %{HTTPS} off
+    # RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+    # 2. Protect sensitive directories
+    RewriteRule ^(src|sql|wp-plugin)/ - [F,L]
+
+    # 3. Allow access to install.php if it exists
+    RewriteCond %{REQUEST_URI} ^/install\.php$
+    RewriteRule ^ - [L]
+
+    # 4. Handle URLs without /public/ prefix
+    # If the request is NOT for a real file/dir in the root
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    # AND it doesn't already start with /public/
+    RewriteCond %{REQUEST_URI} !^/public/
+    # THEN rewrite it to the public folder
+    RewriteRule ^(.*)$ public/$1 [L]
+
+    # 5. Fallback for the root itself
+    RewriteRule ^$ public/index.php [L]
+</IfModule>
+
+# 6. Block access to sensitive files
+<FilesMatch "\.(sql|md|json|lock|bak|config|env|yaml)$">
+    Require all denied
+</FilesMatch>
+
+# 7. Protect the config file specifically
+<Files "config.php">
+    Require all denied
+</Files>

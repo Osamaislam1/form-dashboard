@@ -1,0 +1,6 @@
+# Local config with DB credentials — NEVER commit this
+config.local.php
+
+# OS / editor noise
+.DS_Store
+Thumbs.db

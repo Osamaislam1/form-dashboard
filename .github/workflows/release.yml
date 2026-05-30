@@ -1,0 +1,71 @@
+name: Release Plugin
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  release:
+    name: Build and publish plugin release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version number
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build plugin zip
+        run: |
+          cd wp-plugin
+          zip -r ../form-dashboard-bridge.zip form-dashboard-bridge/
+          cd ..
+
+      - name: Write plugin-version.json
+        run: |
+          cat > plugin-version.json <<EOF
+          {
+            "version":      "${{ steps.version.outputs.VERSION }}",
+            "requires":     "5.8",
+            "tested":       "6.6",
+            "requires_php": "8.0",
+            "last_updated": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "download_url": "https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/releases/download/${{ github.ref_name }}/form-dashboard-bridge.zip",
+            "sections": {
+              "description": "Sends form submissions from this WordPress site to a central Form Dashboard.",
+              "changelog":   "See https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/releases/tag/${{ github.ref_name }}"
+            }
+          }
+          EOF
+
+      - name: Commit updated plugin-version.json to main
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git add plugin-version.json
+          git diff --cached --quiet && echo "No changes to commit" || \
+            git commit -m "chore: update plugin-version.json to ${{ steps.version.outputs.VERSION }} [skip ci]"
+          git push origin main
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Form Dashboard Bridge v${{ steps.version.outputs.VERSION }}"
+          body: |
+            ## Form Dashboard Bridge v${{ steps.version.outputs.VERSION }}
+
+            WordPress sites with the plugin installed will be notified of this update automatically.
+            Sites with auto-updates enabled will update silently within a few hours.
+
+            **Manual install:** Download `form-dashboard-bridge.zip` below and upload via Plugins → Add New → Upload Plugin.
+          files: |
+            form-dashboard-bridge.zip
+            plugin-version.json
