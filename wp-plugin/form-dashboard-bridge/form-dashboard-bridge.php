@@ -634,6 +634,9 @@ class Form_Dashboard_Bridge {
                 $count++;
             }
 
+            $max_entry = (int)$wpdb->get_var("SELECT MAX(entry_id) FROM {$entry_table}");
+            if ($max_entry) update_option('fdash_last_synced_forminator', $max_entry, false);
+
             return "<strong>Forminator sync queued:</strong> {$count} entries dispatched. They will appear in the dashboard within seconds.";
         }
 
@@ -1229,6 +1232,7 @@ class Form_Dashboard_Bridge {
             ],
         ]);
         self::check_resync_request();
+        self::sync_new_entries();
     }
 
     /**
@@ -1296,6 +1300,79 @@ class Form_Dashboard_Bridge {
             'fields'       => ['result' => $result],
         ]);
         delete_transient('fdash_resync_lock');
+    }
+
+    /**
+     * Incremental Forminator sync: pushes entries with entry_id > last known synced id.
+     * Runs on every heartbeat as a lightweight fallback for when the live hook fails.
+     * Read-only against Forminator tables — no impact on forms, hooks, or SMTP.
+     */
+    private static function sync_new_entries(): void {
+        if (!class_exists('Forminator_API')) return;
+
+        global $wpdb;
+        $entry_table = $wpdb->prefix . 'frmt_form_entry';
+        $meta_table  = $wpdb->prefix . 'frmt_form_entry_meta';
+
+        if ($wpdb->get_var("SHOW TABLES LIKE '{$entry_table}'") !== $entry_table) return;
+
+        $last_id = (int)get_option('fdash_last_synced_forminator', 0);
+
+        // First run: record the current MAX so we only forward-sync from this point.
+        // Admin should run a manual bulk sync first to backfill any existing history.
+        if (!$last_id) {
+            $max = (int)$wpdb->get_var("SELECT MAX(entry_id) FROM {$entry_table}");
+            if ($max) update_option('fdash_last_synced_forminator', $max, false);
+            return;
+        }
+
+        $new_entries = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT entry_id, form_id, date_created FROM {$entry_table}
+                 WHERE entry_id > %d ORDER BY entry_id ASC LIMIT 200",
+                $last_id
+            )
+        );
+
+        if (empty($new_entries)) return;
+
+        $form_titles = [];
+        $max_id = $last_id;
+
+        foreach ($new_entries as $entry) {
+            $entry_id = (int)$entry->entry_id;
+            $fid      = (int)$entry->form_id;
+            if ($entry_id > $max_id) $max_id = $entry_id;
+
+            if (!isset($form_titles[$fid])) {
+                $form_titles[$fid] = get_the_title($fid) ?: "Forminator #{$fid}";
+            }
+
+            $metas = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT meta_key, meta_value FROM {$meta_table} WHERE entry_id = %d",
+                    $entry_id
+                )
+            );
+            $fields = [];
+            foreach ((array)$metas as $m) {
+                $fields[$m->meta_key] = $m->meta_value;
+            }
+
+            self::send_bulk([
+                'plugin'       => 'forminator',
+                'form_id'      => (string)$fid,
+                'form_title'   => $form_titles[$fid],
+                'entry_id'     => (string)$entry_id,
+                'submitted_at' => $entry->date_created ?? gmdate('c'),
+                'ip'           => '',
+                'user_agent'   => '',
+                'fields'       => $fields,
+            ]);
+        }
+
+        update_option('fdash_last_synced_forminator', $max_id, false);
+        error_log('[fdash] sync_new_entries: pushed ' . count($new_entries) . ' new Forminator entries (last_id=' . $max_id . ')');
     }
 
     public static function schedule_heartbeat(): void {
@@ -1439,4 +1516,5 @@ register_deactivation_hook(__FILE__, function () {
         $ts = wp_next_scheduled($hook);
         if ($ts) wp_unschedule_event($ts, $hook);
     }
+    delete_option('fdash_last_synced_forminator');
 });

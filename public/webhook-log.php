@@ -4,6 +4,22 @@ require __DIR__ . '/../src/bootstrap.php';
 $user = require_login();
 $pdo  = db();
 
+// Clear actions (admin only)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['clear_action'])) {
+    require_admin();
+    csrf_check();
+    if ($_POST['clear_action'] === 'webhook_log') {
+        $pdo->exec('DELETE FROM webhook_log');
+        header('Location: /webhook-log.php?cleared=webhook');
+        exit;
+    }
+    if ($_POST['clear_action'] === 'dead_letter') {
+        $pdo->exec('DELETE FROM dead_letter_log');
+        header('Location: /webhook-log.php?cleared=dead_letter');
+        exit;
+    }
+}
+
 $siteFilter   = isset($_GET['site_id']) ? (int)$_GET['site_id'] : 0;
 $statusFilter = in_array($_GET['status'] ?? '', ['ok', 'rejected', 'error']) ? $_GET['status'] : '';
 $perPage      = 100;
@@ -57,7 +73,22 @@ require __DIR__ . '/../src/layout.php';
         <h1>Webhook Log</h1>
         <div class="sub">All ingest requests from WordPress sites — last <?= number_format($totalRows) ?> events</div>
     </div>
+    <?php if ($user['role'] === 'admin'): ?>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <form method="post" onsubmit="return confirm('Clear all webhook log entries?')">
+            <input type="hidden" name="_csrf" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="clear_action" value="webhook_log">
+            <button class="btn" type="submit" style="font-size:12px;color:var(--err);">Clear webhook log</button>
+        </form>
+    </div>
+    <?php endif; ?>
 </div>
+
+<?php if (!empty($_GET['cleared'])): ?>
+<div class="flash ok" style="margin-bottom:16px;">
+    <?= $_GET['cleared'] === 'webhook' ? 'Webhook log cleared.' : 'Dead letter log cleared.' ?>
+</div>
+<?php endif; ?>
 
 <!-- 24h summary pills -->
 <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;">
@@ -180,10 +211,19 @@ $deadLetters = $pdo->query(
 )->fetchAll();
 if ($deadLetters):
 ?>
-<h2 style="margin-top:36px;font-size:16px;font-weight:600;color:var(--err);">
-    Dead Letters
-    <span style="font-size:12px;font-weight:400;color:var(--text-dim);margin-left:8px;">submissions permanently failed after 5 retry attempts</span>
-</h2>
+<div style="display:flex;align-items:center;gap:16px;margin-top:36px;">
+    <h2 style="font-size:16px;font-weight:600;color:var(--err);margin:0;">
+        Dead Letters
+        <span style="font-size:12px;font-weight:400;color:var(--text-dim);margin-left:8px;">submissions permanently failed after 5 retry attempts</span>
+    </h2>
+    <?php if ($user['role'] === 'admin'): ?>
+    <form method="post" onsubmit="return confirm('Clear all dead letter entries?')">
+        <input type="hidden" name="_csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="clear_action" value="dead_letter">
+        <button class="btn" type="submit" style="font-size:12px;color:var(--err);">Clear dead letters</button>
+    </form>
+    <?php endif; ?>
+</div>
 <table class="t" style="margin-top:12px;">
     <thead>
         <tr>

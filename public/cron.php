@@ -104,5 +104,19 @@ try {
     $report['tasks']['dead_letter_cleanup'] = ['error' => $e->getMessage()];
 }
 
+// ── Task 5: Schedule hourly append resync for all active sites ────────────────
+// Sets resync_requested_at so each WP site's plugin picks it up on the next
+// heartbeat or admin-page load and pushes any new entries (dashboard deduplicates).
+try {
+    $upd = $pdo->prepare(
+        "UPDATE sites SET resync_requested_at = NOW()
+         WHERE status = 'active' AND resync_requested_at IS NULL"
+    );
+    $upd->execute();
+    $report['tasks']['auto_resync_trigger'] = ['sites_queued' => $upd->rowCount()];
+} catch (\Throwable $e) {
+    $report['tasks']['auto_resync_trigger'] = ['error' => $e->getMessage()];
+}
+
 http_response_code(200);
 echo json_encode($report, JSON_PRETTY_PRINT);

@@ -4,6 +4,18 @@ require __DIR__ . '/../src/bootstrap.php';
 $user = require_login();
 $pdo = db();
 
+// Clear action (admin only)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['clear_action'])) {
+    require_admin();
+    csrf_check();
+    if ($_POST['clear_action'] === 'email_health_log') {
+        $pdo->exec('DELETE FROM email_health_log');
+        $pdo->exec("UPDATE sites SET email_status='unknown', email_error=NULL, email_checked_at=NULL");
+        header('Location: /email-health.php?cleared=1');
+        exit;
+    }
+}
+
 // Summary counts
 $summary = $pdo->query(
     "SELECT
@@ -68,7 +80,18 @@ require __DIR__ . '/../src/layout.php';
         <div class="sub">Monitor email delivery across all connected sites</div>
     </div>
     <a href="/alerts.php" class="btn primary">+ Configure alerts</a>
+    <?php if ($user['role'] === 'admin'): ?>
+    <form method="post" onsubmit="return confirm('Clear all email health history? Site statuses will reset to unknown.')">
+        <input type="hidden" name="_csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="clear_action" value="email_health_log">
+        <button class="btn" type="submit" style="color:var(--err);">Clear history</button>
+    </form>
+    <?php endif; ?>
 </div>
+
+<?php if (!empty($_GET['cleared'])): ?>
+<div class="flash ok" style="margin-bottom:16px;">Email health log cleared. Site statuses reset to unknown.</div>
+<?php endif; ?>
 
 <!-- Summary cards -->
 <div class="cards" style="grid-template-columns: repeat(3, 1fr);">
