@@ -129,7 +129,18 @@ require __DIR__ . '/../src/layout.php';
                 <strong><?= e($f['name']) ?></strong>
                 <div style="color:var(--text-faint); font-size:11px;"><?= e($f['url']) ?></div>
             </td>
-            <td style="color:var(--err); font-size:12px;"><?= e($f['email_error'] ?: 'wp_mail() failed — no error details captured by the mailer') ?></td>
+            <td style="color:var(--err); font-size:12px;">
+                <?php
+                $err     = $f['email_error'] ?: 'wp_mail() failed — no error details captured by the mailer';
+                $isOauth = (bool) preg_match('/(oauth|CREDENTIALS_MISSING|UNAUTHENTICATED|Gmail API)/i', $err);
+                echo e($err);
+                if ($isOauth): ?>
+                <div style="margin-top:4px;color:var(--text-dim);font-size:11px;">
+                    → Re-authorize in <strong>Post SMTP / WP Mail SMTP → Settings → Gmail</strong>.
+                    For an accurate test use <strong>Test Email Now</strong> in the bridge plugin settings (runs in admin context).
+                </div>
+                <?php endif; ?>
+            </td>
             <td style="font-size:12px; color:var(--text-dim);"><?= e($f['mailer'] ?: '—') ?></td>
             <td style="font-size:12px; color:var(--text-dim);">
                 <?= $f['email_checked_at'] ? date('M j, Y H:i', strtotime($f['email_checked_at'])) : '—' ?>
@@ -177,7 +188,17 @@ require __DIR__ . '/../src/layout.php';
             <span class="pill <?= $l['status']==='ok'?'ok':'err' ?>"><?= $l['status']==='ok'?'✓ ok':'✕ fail' ?></span>
         </td>
         <td style="font-size:12px; color:var(--text-dim);"><?= e($l['mailer'] ?: '—') ?></td>
-        <td style="font-size:12px; color:var(--err);"><?= $l['error_msg'] ? e($l['error_msg']) : '—' ?></td>
+        <td style="font-size:12px; color:var(--err);">
+            <?php
+            $logErr     = $l['error_msg'] ?? '';
+            $logIsOauth = $logErr && (bool) preg_match('/(oauth|CREDENTIALS_MISSING|UNAUTHENTICATED|Gmail API)/i', $logErr);
+            echo $logErr ? e($logErr) : '—';
+            if ($logIsOauth): ?>
+            <div style="margin-top:3px;color:var(--text-dim);font-size:11px;">
+                → Re-authorize in <strong>Post SMTP / WP Mail SMTP → Settings → Gmail</strong>.
+            </div>
+            <?php endif; ?>
+        </td>
         <td style="font-size:12px; color:var(--text-dim);"><?= date('M j, Y H:i:s', strtotime($l['checked_at'])) ?></td>
     </tr>
     <?php endforeach; ?>

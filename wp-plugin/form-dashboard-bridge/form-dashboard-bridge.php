@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Form Dashboard Bridge
  * Description: Sends form submissions from this site to a central Form Dashboard. Supports Forminator, Contact Form 7, Gravity Forms, WPForms, Fluent Forms, and Elementor Forms.
- * Version:     1.2.0
+ * Version:     1.2.1
  * Author:      You
  * License:     GPL-2.0-or-later
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class Form_Dashboard_Bridge {
 
     const OPT            = 'fdash_settings';
-    const VERSION        = '1.2.0';
+    const VERSION        = '1.2.1';
     const UPDATE_JSON_URL = 'https://raw.githubusercontent.com/Osamaislam1/form-dashboard/main/plugin-version.json';
 
     public static function init() {
@@ -21,6 +21,9 @@ class Form_Dashboard_Bridge {
         // Check for pending resyncs on every admin page load (rate-limited to once per 5 min).
         // This avoids relying on WP-Cron, which doesn't fire reliably on low-traffic sites.
         add_action('admin_init', [__CLASS__, 'maybe_check_resync_on_admin_load']);
+        // Run email health check from admin context so OAuth-based mailers (Post SMTP Gmail API)
+        // can refresh tokens correctly — WP-Cron subprocesses may have blocked outbound HTTP.
+        add_action('admin_init', [__CLASS__, 'maybe_run_email_health_on_admin_load']);
 
         // Forminator — register all known hook variants across versions
         add_action('forminator_custom_form_after_save_entry', [__CLASS__, 'on_forminator'],        20, 2);
@@ -1119,12 +1122,111 @@ class Form_Dashboard_Bridge {
     /* ===== Email Health Check ===== */
 
     public static function detect_mailer(): string {
-        if (class_exists('WPMailSMTP\WP')) return 'WP Mail SMTP';
-        if (class_exists('PostmanOptions')) return 'Post SMTP';
+        if (class_exists('WPMailSMTP\WP')) {
+            $smtp_opts   = get_option('wp_mail_smtp', []);
+            $smtp_mailer = strtolower($smtp_opts['mail']['mailer'] ?? '');
+            if (in_array($smtp_mailer, ['gmail', 'googleworkspace'], true)) {
+                return 'WP Mail SMTP (Gmail OAuth)';
+            }
+            return 'WP Mail SMTP';
+        }
+        if (class_exists('PostmanOptions')) {
+            $postman_opts = get_option('postman_options', []);
+            $transport    = strtolower($postman_opts['transport_type'] ?? '');
+            if (str_contains($transport, 'gmail') || str_contains($transport, 'google')) {
+                return 'Post SMTP (Gmail API)';
+            }
+            return 'Post SMTP';
+        }
         if (defined('JEsuspended_PHP_SMTP_DIR')) return 'Easy WP SMTP';
         if (class_exists('FluentMail\App\App')) return 'FluentSMTP';
         if (function_exists('mail')) return 'PHP mail()';
         return 'Unknown';
+    }
+
+    /**
+     * Reads Post SMTP's email log table for recent failures instead of calling wp_mail().
+     * Avoids triggering OAuth refresh in WP-Cron context where outbound HTTP may be blocked.
+     * Returns null when the table is missing or has no recent entries — caller falls back to
+     * the admin-context wp_mail() test in that case.
+     *
+     * @param int $hours Look back this many hours (matches the configured check frequency).
+     * @return array{ok:bool,fail_count:int,total:int,error:string|null}|null
+     */
+    private static function check_post_smtp_log_health(int $hours = 24): ?array {
+        global $wpdb;
+
+        // Support both current table (post_smtp_logs) and legacy (postman_sent_mail).
+        $table = null;
+        foreach ([$wpdb->prefix . 'post_smtp_logs', $wpdb->prefix . 'postman_sent_mail'] as $t) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+            if ($wpdb->get_var("SHOW TABLES LIKE '{$t}'") === $t) {
+                $table = $t;
+                break;
+            }
+        }
+        if (!$table) return null;
+
+        $since        = gmdate('Y-m-d H:i:s', time() - ($hours * HOUR_IN_SECONDS));
+        $using_legacy = str_contains($table, 'postman_sent_mail');
+
+        if ($using_legacy) {
+            // Legacy schema: is_error (0/1) + status_message + sent_at
+            $total = (int)$wpdb->get_var(
+                $wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE sent_at >= %s", $since) // phpcs:ignore
+            );
+            if ($total === 0) return null;
+
+            $failures = $wpdb->get_results(
+                $wpdb->prepare( // phpcs:ignore
+                    "SELECT status_message AS error_msg, sent_at AS `time`
+                     FROM {$table} WHERE sent_at >= %s AND is_error = 1
+                     ORDER BY sent_at DESC LIMIT 5",
+                    $since
+                )
+            );
+        } else {
+            // Current schema: success = '1' means OK; any other string is the error message.
+            $total = (int)$wpdb->get_var(
+                $wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE time >= %s", $since) // phpcs:ignore
+            );
+            if ($total === 0) return null;
+
+            $failures = $wpdb->get_results(
+                $wpdb->prepare( // phpcs:ignore
+                    "SELECT success AS error_msg, solution, `time`
+                     FROM {$table}
+                     WHERE time >= %s
+                       AND success NOT IN ('1', 'Sent ( ** Fallback ** )', 'In Queue')
+                     ORDER BY time DESC LIMIT 5",
+                    $since
+                )
+            );
+        }
+
+        $fail_count = count($failures);
+        $latest_err = null;
+
+        if ($fail_count > 0) {
+            $raw     = (string)($failures[0]->error_msg ?? '');
+            $decoded = json_decode($raw, true);
+            if (isset($decoded['error']['status'])) {
+                $reason     = $decoded['error']['errors'][0]['reason'] ?? $decoded['error']['status'];
+                $latest_err = 'Gmail API error (' . $reason . '): ' . ($decoded['error']['message'] ?? $decoded['error']['status']);
+            } else {
+                $latest_err = mb_substr($raw, 0, 300);
+            }
+            if (!empty($failures[0]->solution)) {
+                $latest_err .= ' — Suggested fix: ' . mb_substr((string)$failures[0]->solution, 0, 150);
+            }
+        }
+
+        return [
+            'ok'         => $fail_count === 0,
+            'fail_count' => $fail_count,
+            'total'      => $total,
+            'error'      => $latest_err,
+        ];
     }
 
     public static function check_email_health(bool $report = false, bool $send_email = true): array {
@@ -1149,6 +1251,27 @@ class Form_Dashboard_Bridge {
             add_action('wp_mail_failed', $error_handler);
             $result = wp_mail($to, $subject, $body);
             remove_action('wp_mail_failed', $error_handler);
+
+            // Normalize Google API JSON error blobs (~900 chars) into readable one-liners before
+            // sending to the dashboard. Raw JSON gets truncated at 500 chars in the DB.
+            if ($error_msg) {
+                $decoded = json_decode($error_msg, true);
+                if (isset($decoded['error']['status']) &&
+                    in_array($decoded['error']['status'], ['UNAUTHENTICATED', 'PERMISSION_DENIED'], true)) {
+                    $reason = $decoded['error']['errors'][0]['reason'] ?? $decoded['error']['status'];
+                    if (in_array($reason, ['required', 'CREDENTIALS_MISSING'], true)) {
+                        $error_msg = 'Gmail API: no Authorization header sent (' . $reason . '). '
+                                   . 'Post SMTP could not load the OAuth access token — this usually '
+                                   . 'means wp_mail() was called from a context where outbound HTTP '
+                                   . 'is blocked (WP-Cron). Use "Test Email Now" in the plugin settings '
+                                   . '(admin context) for an accurate result.';
+                    } else {
+                        $error_msg = 'Gmail OAuth error (' . $reason . '): '
+                                   . ($decoded['error']['message'] ?? $decoded['error']['status'])
+                                   . '. Re-authorize in ' . $mailer . ' settings.';
+                    }
+                }
+            }
 
             // Some mailers (e.g. Post SMTP) fail without firing wp_mail_failed with an error string.
             // Provide a useful fallback so the dashboard shows actionable information.
@@ -1198,6 +1321,53 @@ class Form_Dashboard_Bridge {
     public static function run_email_health_cron(): void {
         $opt = get_option(self::OPT, []);
         if (empty($opt['email_monitor'])) return;
+
+        $mailer    = self::detect_mailer();
+        $frequency = $opt['email_frequency'] ?? 'daily';
+        $hours     = match ($frequency) {
+            'hourly'     => 1,
+            'twicedaily' => 12,
+            default      => 24,
+        };
+
+        // For Post SMTP (any variant): read its email log table instead of calling wp_mail().
+        // On some hosts WP-Cron subprocesses cannot reach oauth2.googleapis.com to refresh the
+        // access token, so Post SMTP sends the Gmail API request without an Authorization header
+        // → CREDENTIALS_MISSING. A DB read has no outbound HTTP dependency.
+        if (str_contains($mailer, 'Post SMTP')) {
+            $log = self::check_post_smtp_log_health($hours);
+
+            if ($log !== null) {
+                $status    = $log['ok'] ? 'ok' : 'fail';
+                $error_msg = $log['ok']
+                    ? ''
+                    : ($log['fail_count'] . ' email failure(s) in last ' . $hours . 'h. ' . ($log['error'] ?? ''));
+
+                self::send([
+                    'type'         => 'email_health',
+                    'plugin'       => 'system',
+                    'form_id'      => 'email-health',
+                    'form_title'   => 'Email Health Check',
+                    'submitted_at' => gmdate('c'),
+                    'fields'       => [
+                        'status'            => $status,
+                        'error'             => $error_msg,
+                        'mailer'            => $mailer,
+                        'source'            => 'post_smtp_log',
+                        'php_version'       => PHP_VERSION,
+                        'wp_version'        => get_bloginfo('version'),
+                        'plugin_version'    => self::VERSION,
+                        'wp_cron_disabled'  => (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON) ? 'yes' : 'no',
+                        'retry_queue_depth' => count(get_option('fdash_retry_queue', [])),
+                        'dead_letter_count' => count(get_option('fdash_dead_letter', [])),
+                    ],
+                ]);
+            }
+            // When log is empty/missing, skip — the admin-init path handles the definitive test.
+            return;
+        }
+
+        // Non-OAuth mailers (plain SMTP, etc.): safe to call wp_mail() directly from cron.
         self::check_email_health(true);
     }
 
@@ -1211,6 +1381,9 @@ class Form_Dashboard_Bridge {
         if (!empty($opt['email_monitor'])) {
             wp_schedule_event(time() + 60, $frequency, 'fdash_email_health');
         }
+
+        // Reset admin-load transient so the updated settings take effect on the next admin visit.
+        delete_transient('fdash_email_health_admin_ran');
     }
 
     /* ===== Heartbeat ===== */
@@ -1244,6 +1417,28 @@ class Form_Dashboard_Bridge {
         if (get_transient('fdash_resync_admin_check')) return;
         set_transient('fdash_resync_admin_check', 1, 5 * MINUTE_IN_SECONDS);
         self::check_resync_request();
+    }
+
+    /**
+     * Run the full wp_mail() health test from an admin page-load context (not WP-Cron).
+     * Admin requests have an authenticated HTTP context where Post SMTP can always refresh its
+     * Gmail OAuth access token. Rate-limited by a transient matching the configured frequency.
+     * This is the definitive health test for OAuth-based mailers; the cron path reads logs only.
+     */
+    public static function maybe_run_email_health_on_admin_load(): void {
+        $opt = get_option(self::OPT, []);
+        if (empty($opt['email_monitor'])) return;
+
+        $frequency = $opt['email_frequency'] ?? 'daily';
+        $ttl = match ($frequency) {
+            'hourly'     => HOUR_IN_SECONDS,
+            'twicedaily' => 12 * HOUR_IN_SECONDS,
+            default      => DAY_IN_SECONDS,
+        };
+
+        if (get_transient('fdash_email_health_admin_ran')) return;
+        set_transient('fdash_email_health_admin_ran', 1, $ttl);
+        self::check_email_health(true);
     }
 
     /**
@@ -1517,4 +1712,5 @@ register_deactivation_hook(__FILE__, function () {
         if ($ts) wp_unschedule_event($ts, $hook);
     }
     delete_option('fdash_last_synced_forminator');
+    delete_transient('fdash_email_health_admin_ran');
 });

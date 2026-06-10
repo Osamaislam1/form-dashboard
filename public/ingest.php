@@ -74,8 +74,18 @@ if (($data['type'] ?? '') === 'email_health') {
         exit;
     }
 
-    $status = $raw_status === 'ok' ? 'ok' : 'fail';
-    $error  = substr((string)($fields['error'] ?? ''), 0, 500) ?: null;
+    $status   = $raw_status === 'ok' ? 'ok' : 'fail';
+    $rawError = (string)($fields['error'] ?? '');
+    // Parse Google API JSON blobs (sent by older plugin versions) into readable strings
+    // before truncating to 500 chars — raw JSON is ~900 chars and truncates as broken JSON.
+    $errDecoded = json_decode($rawError, true);
+    if (isset($errDecoded['error']['status']) &&
+        in_array($errDecoded['error']['status'], ['UNAUTHENTICATED', 'PERMISSION_DENIED'], true)) {
+        $reason   = $errDecoded['error']['errors'][0]['reason'] ?? $errDecoded['error']['status'];
+        $rawError = 'Gmail API error (' . $reason . '): '
+                  . ($errDecoded['error']['message'] ?? $errDecoded['error']['status']);
+    }
+    $error  = substr($rawError, 0, 500) ?: null;
     $mailer = substr((string)($fields['mailer'] ?? ''), 0, 100) ?: null;
 
     $pdo->prepare('INSERT INTO email_health_log (site_id, status, error_msg, mailer) VALUES (?, ?, ?, ?)')
