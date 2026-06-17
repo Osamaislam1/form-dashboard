@@ -104,7 +104,38 @@ try {
     $report['tasks']['dead_letter_cleanup'] = ['error' => $e->getMessage()];
 }
 
-// ── Task 5: Schedule hourly append resync for all active sites ────────────────
+// ── Task 5: Zepto Mail — sync delivery logs for all configured scopes ────────
+try {
+    require_once FDASH_ROOT . '/src/zepto_api.php';
+
+    $fromIso = date('Y-m-d\T00:00:00P', strtotime('-1 day'));
+    $toIso   = date('Y-m-d\T23:59:59P');
+    $synced  = [];
+
+    // Global scope
+    if (cfg('zepto.api_token', '') !== '') {
+        $r = zepto_fetch_and_cache(null, $fromIso, $toIso);
+        $synced['global'] = $r;
+    }
+
+    // Per-site scopes
+    $siteTokens = $pdo->query(
+        "SELECT id, name FROM sites WHERE zepto_api_token IS NOT NULL AND zepto_api_token != ''"
+    )->fetchAll();
+    foreach ($siteTokens as $st) {
+        $r = zepto_fetch_and_cache((int)$st['id'], $fromIso, $toIso);
+        $synced[$st['name']] = $r;
+    }
+
+    $report['tasks']['zepto_sync'] = [
+        'scopes_synced' => count($synced),
+        'detail'        => $synced,
+    ];
+} catch (\Throwable $e) {
+    $report['tasks']['zepto_sync'] = ['error' => $e->getMessage()];
+}
+
+// ── Task 7: Schedule hourly append resync for all active sites ────────────────
 // Sets resync_requested_at so each WP site's plugin picks it up on the next
 // heartbeat or admin-page load and pushes any new entries (dashboard deduplicates).
 try {

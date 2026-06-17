@@ -21,6 +21,12 @@ return [
         'from_email' => 'dashboard@example.com',
         'from_name'  => 'Form Dashboard',
     ],
+    'zepto' => [
+        // Zepto Mail (zeptomail.com) API token — copy from Zepto dashboard → Settings → API Token
+        // Leave empty if you don't use Zepto Mail for the dashboard's own outbound emails.
+        'api_token' => '',
+        'api_url'   => 'https://api.zeptomail.com/v1.1/',
+    ],
     'cron' => [
         // Random secret for /public/cron.php — set this in config.local.php and
         // add to your server cron: curl -s "https://yourdomain/cron.php?secret=JD483jf93Hqkq0Ns9x72BZtQvs6tyW0C"

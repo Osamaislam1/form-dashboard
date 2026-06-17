@@ -487,6 +487,14 @@ label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 
                 </svg>
                 Email health
             </a></li>
+            <li><a href="/mail-deliverability.php" class="<?= $active==='mail-deliverability'?'active':'' ?>">
+                <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="1" y="3" width="14" height="10" rx="1"/>
+                    <path d="M1 5l7 5 7-5"/>
+                    <polyline points="4,10 6,12 9,9"/>
+                </svg>
+                Mail Deliverability
+            </a></li>
             <li><a href="/webhook-log.php" class="<?= $active==='webhook-log'?'active':'' ?>">
                 <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="1,11 4,6 7,9 10,4 13,7 15,5"/>

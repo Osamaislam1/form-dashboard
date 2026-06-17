@@ -62,6 +62,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $user['role'] === 'admin') {
         $pdo->prepare('UPDATE sites SET resync_requested_at = NULL WHERE id = ?')->execute([$id]);
         flash('Resync request cancelled.', 'success');
         redirect('/sites.php');
+    } elseif ($action === 'save_zepto_token') {
+        $id    = (int)($_POST['id'] ?? 0);
+        $token = trim($_POST['zepto_api_token'] ?? '');
+        $pdo->prepare('UPDATE sites SET zepto_api_token = ? WHERE id = ?')->execute([$token ?: null, $id]);
+        flash($token ? 'Zepto API token saved.' : 'Zepto API token cleared.', 'success');
+        redirect('/sites.php');
     }
 }
 
@@ -221,6 +227,7 @@ function togglePanel(id) {
                 <button name="action" value="toggle" class="btn" title="Pause/resume"><?= $s['status']==='active'?'Pause':'Resume' ?></button>
                 <button name="action" value="rotate" class="btn" title="Rotate secret">Rotate</button>
                 <button type="button" class="btn" onclick="togglePanel('resync-<?= (int)$s['id'] ?>')">Resync</button>
+                <button type="button" class="btn" onclick="togglePanel('zepto-<?= (int)$s['id'] ?>')" title="Set Zepto Mail API token">Zepto</button>
                 <button name="action" value="delete" class="btn danger"
                     onclick="return confirm('Delete site and all its submissions?')">Delete</button>
             </form>
@@ -275,6 +282,36 @@ function togglePanel(id) {
                 });
             })();
             </script>
+
+            <!-- Zepto Mail token panel -->
+            <div id="zepto-<?= (int)$s['id'] ?>" class="resync-panel">
+                <p style="margin:0 0 8px;font-size:13px;font-weight:500;">Zepto Mail API Token — <?= e($s['name']) ?></p>
+                <p style="margin:0 0 10px;font-size:12px;color:var(--text-dim);">
+                    Leave blank to use the global token from <code>config.local.php</code>.<br>
+                    Get your token from <strong>zeptomail.com → Settings → API Tokens</strong>.
+                </p>
+                <form method="post">
+                    <input type="hidden" name="_csrf"   value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="action"  value="save_zepto_token">
+                    <input type="hidden" name="id"      value="<?= (int)$s['id'] ?>">
+                    <div class="field" style="margin-bottom:10px;">
+                        <input type="password" name="zepto_api_token"
+                               placeholder="Zoho-enczapikey token…"
+                               value="<?= e($s['zepto_api_token'] ?? '') ?>"
+                               autocomplete="off" style="font-family:monospace;font-size:12px;">
+                    </div>
+                    <?php if (!empty($s['zepto_api_token'])): ?>
+                    <span class="pill ok" style="margin-bottom:8px;display:inline-block;">✓ token set</span>
+                    <?php endif; ?>
+                    <div style="display:flex;gap:8px;margin-top:6px;">
+                        <button class="btn primary" style="font-size:12px;">Save token</button>
+                        <button type="button" class="btn" style="font-size:12px;" onclick="togglePanel('zepto-<?= (int)$s['id'] ?>')">Cancel</button>
+                        <?php if (!empty($s['zepto_api_token'])): ?>
+                        <a href="/mail-deliverability.php?scope=<?= (int)$s['id'] ?>" class="btn" style="font-size:12px;">View logs →</a>
+                        <?php endif; ?>
+                    </div>
+                </form>
+            </div>
         </td>
         <?php endif; ?>
     </tr>

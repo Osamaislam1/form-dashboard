@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS sites (
     email_checked_at DATETIME NULL,
     email_error     VARCHAR(500) NULL,
     last_seen_at    DATETIME NULL,
+    zepto_api_token VARCHAR(255) DEFAULT NULL,
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_api_key (api_key),
     KEY idx_status (status)
@@ -83,6 +84,21 @@ CREATE TABLE IF NOT EXISTS webhook_log (
     received_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_received (received_at),
     KEY idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS zepto_mail_log (
+    id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    site_id       INT UNSIGNED DEFAULT NULL,   -- NULL = global dashboard account
+    message_id    VARCHAR(255) DEFAULT NULL,
+    recipient     VARCHAR(255) DEFAULT NULL,
+    subject       VARCHAR(500) DEFAULT NULL,
+    status        ENUM('queued','sent','delivered','bounced','opened','clicked','failed') NOT NULL DEFAULT 'sent',
+    bounce_reason TEXT DEFAULT NULL,
+    sent_at       DATETIME DEFAULT NULL,
+    delivered_at  DATETIME DEFAULT NULL,
+    fetched_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_site_sent (site_id, sent_at),
+    KEY idx_status    (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS email_health_log (
