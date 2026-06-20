@@ -22,10 +22,15 @@ return [
         'from_name'  => 'Form Dashboard',
     ],
     'zepto' => [
-        // Zepto Mail (zeptomail.com) API token — copy from Zepto dashboard → Settings → API Token
-        // Leave empty if you don't use Zepto Mail for the dashboard's own outbound emails.
-        'api_token' => '',
-        'api_url'   => 'https://api.zeptomail.com/v1.1/',
+        // OAuth 2.0 credentials — register a "Server-based Application" at https://api-console.zoho.com/
+        // Set Authorized Redirect URI to: https://your-dashboard.example.com/zepto-oauth-callback.php
+        'client_id'     => '',
+        'client_secret' => '',
+        'redirect_uri'  => '',  // must match exactly what you entered in the Zoho console
+        // Global datacenter (accounts.zoho.com) — change to https://api.zeptomail.in/v1.1/ for India (accounts.zoho.in)
+        'api_url'       => 'https://api.zeptomail.com/v1.1/',
+        // Match your Zoho account region: accounts.zoho.com / accounts.zoho.in / accounts.zoho.eu / accounts.zoho.com.au
+        'accounts_url'  => 'https://accounts.zoho.com',
     ],
     'cron' => [
         // Random secret for /public/cron.php — set this in config.local.php and

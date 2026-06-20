@@ -1,131 +1,135 @@
 <?php
-// public/mail-deliverability.php — Zepto Mail deliverability dashboard
+// public/mail-deliverability.php — Zepto Mail deliverability dashboard (OAuth)
 require __DIR__ . '/../src/bootstrap.php';
 require __DIR__ . '/../src/zepto_api.php';
 $user = require_admin();
 $pdo  = db();
 
-// ── Resolve scope (global vs per-site) ───────────────────────────────────────
-$scopeParam = $_GET['scope'] ?? $_POST['scope'] ?? 'global';
-$scopeSiteId = null;
-if ($scopeParam !== 'global' && ctype_digit((string)$scopeParam)) {
-    $scopeSiteId = (int)$scopeParam;
+// ── Handle POST actions ───────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    csrf_check();
+
+    // Refresh: pull latest logs from API
+    if (($_POST['action'] ?? '') === 'refresh') {
+        $dateFrom = $_POST['date_from'] ?? date('Y-m-d', strtotime('-6 days'));
+        $dateTo   = $_POST['date_to']   ?? date('Y-m-d');
+        $tzOffset = date('P');
+        $fromIso  = $dateFrom . 'T00:00:00' . $tzOffset;
+        $toIso    = $dateTo   . 'T23:59:59' . $tzOffset;
+
+        $r = zepto_fetch_and_cache(null, $fromIso, $toIso);
+
+        $qs = http_build_query(array_filter([
+            'date_from' => $dateFrom,
+            'date_to'   => $dateTo,
+            'refreshed' => $r['error'] ? null : $r['inserted'],
+            'err'       => $r['error'] ? urlencode($r['error']) : null,
+        ]));
+        header('Location: /mail-deliverability.php?' . $qs);
+        exit;
+    }
+
+    // Disconnect: remove OAuth token
+    if (($_POST['action'] ?? '') === 'disconnect') {
+        $pdo->prepare("DELETE FROM oauth_tokens WHERE service = 'zepto_global'")->execute();
+        flash('Zepto Mail disconnected.', 'success');
+        redirect('/mail-deliverability.php');
+    }
 }
 
-// Sites that have a per-site token configured
-$tokenSites = $pdo->query(
-    "SELECT id, name FROM sites WHERE zepto_api_token IS NOT NULL AND zepto_api_token != '' ORDER BY name"
-)->fetchAll();
+// ── OAuth / config status ─────────────────────────────────────────────────────
+$isConfigured = zepto_is_configured();
+$isConnected  = $isConfigured && zepto_is_connected();
 
-$globalToken  = cfg('zepto.api_token', '');
-$hasGlobal    = $globalToken !== '';
-$hasAnyToken  = $hasGlobal || count($tokenSites) > 0;
+$hasAnyScope = $isConnected;
 
-// Default scope: global if token set, else first site with token
-if (!$hasGlobal && $scopeParam === 'global' && count($tokenSites) > 0) {
-    $scopeSiteId  = (int)$tokenSites[0]['id'];
-    $scopeParam   = (string)$scopeSiteId;
+// ── From-address filter (site filtering on global dataset) ────────────────────
+// Build map: from_address => site name (from sites.zepto_from_email)
+$siteByFrom = [];
+foreach ($pdo->query("SELECT name, zepto_from_email FROM sites WHERE zepto_from_email IS NOT NULL AND zepto_from_email != '' ORDER BY name")->fetchAll() as $r) {
+    $siteByFrom[$r['zepto_from_email']] = $r['name'];
 }
 
-// ── Date range (default: last 7 days) ────────────────────────────────────────
-$tzOffset = date('P'); // server timezone offset
+// Distinct from_address values present in the cached log
+$logSenders = $pdo->query(
+    "SELECT DISTINCT from_address FROM zepto_mail_log WHERE site_id IS NULL AND from_address IS NOT NULL ORDER BY from_address"
+)->fetchAll(\PDO::FETCH_COLUMN);
+
+$fromFilter = $_GET['from'] ?? '';   // active from_address filter (empty = all sites)
+
+// ── Date range (default: last 7 days) ─────────────────────────────────────────
 $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
 $dateFrom = $_GET['date_from'] ?? date('Y-m-d', strtotime('-6 days'));
 
-$fromIso = $dateFrom . 'T00:00:00' . $tzOffset;
-$toIso   = $dateTo   . 'T23:59:59' . $tzOffset;
-
-// ── Handle POST: Refresh from API ────────────────────────────────────────────
-$refreshResult = null;
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'refresh') {
-    csrf_check();
-    $refreshResult = zepto_fetch_and_cache($scopeSiteId, $fromIso, $toIso);
-    // Redirect to GET to prevent double-submit
-    $qs = http_build_query(array_filter([
-        'scope'      => $scopeParam,
-        'date_from'  => $dateFrom,
-        'date_to'    => $dateTo,
-        'refreshed'  => $refreshResult['error'] ? null : $refreshResult['inserted'],
-        'err'        => $refreshResult['error'] ? urlencode($refreshResult['error']) : null,
-    ]));
-    header('Location: /mail-deliverability.php?' . $qs);
-    exit;
-}
-
-// Flash messages from redirect
+// ── Flash messages from redirect ──────────────────────────────────────────────
 $refreshedCount = isset($_GET['refreshed']) ? (int)$_GET['refreshed'] : null;
-$apiError       = isset($_GET['err']) ? urldecode($_GET['err']) : null;
+$apiError       = isset($_GET['err'])       ? urldecode($_GET['err'])  : null;
 
-// ── Status filter ─────────────────────────────────────────────────────────────
-$statusFilter = $_GET['status'] ?? '';
-
-// ── Summary stats ─────────────────────────────────────────────────────────────
-$summary = zepto_summary($scopeSiteId);
+// ── Summary stats ────────────────────────────────────────────────────────────
+$summary   = $hasAnyScope ? zepto_summary($fromFilter ?: null) : [];
 $total     = (int)($summary['total']     ?? 0);
 $delivered = (int)($summary['delivered'] ?? 0);
 $bounced   = (int)($summary['bounced']   ?? 0);
 $failed    = (int)($summary['failed']    ?? 0);
 $opened    = (int)($summary['opened']    ?? 0);
-$lastFetch = $summary['last_fetched'] ?? null;
+$lastFetch = $summary['last_fetched']    ?? null;
 
-$deliveredPct = $total > 0 ? round($delivered / $total * 100, 1) : 0;
-$bouncePct    = $total > 0 ? round(($bounced + $failed) / $total * 100, 1) : 0;
-$openPct      = $delivered > 0 ? round($opened / $delivered * 100, 1) : 0;
+$deliveredPct  = $total > 0 ? round($delivered / $total * 100, 1) : 0;
+$bouncePct     = $total > 0 ? round(($bounced + $failed) / $total * 100, 1) : 0;
+$processFailed = (int)($summary['failed'] ?? 0);
 
 // ── Log table query ───────────────────────────────────────────────────────────
 $perPage = 50;
 $pageNum = max(1, (int)($_GET['page'] ?? 1));
 $offset  = ($pageNum - 1) * $perPage;
 
-$where  = [];
+$where  = ['site_id IS NULL'];
 $params = [];
-
-if ($scopeSiteId !== null) {
-    $where[]  = 'site_id = ?';
-    $params[] = $scopeSiteId;
-} else {
-    $where[] = 'site_id IS NULL';
+if ($fromFilter !== '') {
+    $where[]  = 'from_address = ?';
+    $params[] = $fromFilter;
 }
 
+$statusFilter  = $_GET['status'] ?? '';
 $validStatuses = ['queued','sent','delivered','bounced','opened','clicked','failed'];
 if ($statusFilter && in_array($statusFilter, $validStatuses, true)) {
     $where[]  = 'status = ?';
     $params[] = $statusFilter;
 }
 
-$whereSql = 'WHERE ' . implode(' AND ', $where);
+$whereSql   = 'WHERE ' . implode(' AND ', $where);
+$totalRows  = 0;
+$totalPages = 1;
+$logs       = [];
 
-$countStmt = $pdo->prepare("SELECT COUNT(*) FROM zepto_mail_log $whereSql");
-$countStmt->execute($params);
-$totalRows  = (int)$countStmt->fetchColumn();
-$totalPages = max(1, (int)ceil($totalRows / $perPage));
+if ($hasAnyScope) {
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM zepto_mail_log $whereSql");
+    $countStmt->execute($params);
+    $totalRows  = (int)$countStmt->fetchColumn();
+    $totalPages = max(1, (int)ceil($totalRows / $perPage));
 
-$logsStmt = $pdo->prepare(
-    "SELECT * FROM zepto_mail_log $whereSql ORDER BY sent_at DESC, id DESC LIMIT $perPage OFFSET $offset"
-);
-$logsStmt->execute($params);
-$logs = $logsStmt->fetchAll();
+    $logsStmt = $pdo->prepare(
+        "SELECT * FROM zepto_mail_log $whereSql ORDER BY sent_at DESC, id DESC LIMIT $perPage OFFSET $offset"
+    );
+    $logsStmt->execute($params);
+    $logs = $logsStmt->fetchAll();
+}
 
 $page   = 'Mail Deliverability';
 $active = 'mail-deliverability';
 require __DIR__ . '/../src/layout.php';
 
-// Status → badge class map
 function zepto_badge(string $status): string {
     return match($status) {
-        'delivered', 'opened', 'clicked' => 'ok',
-        'bounced', 'failed'               => 'err',
-        default                           => 'warn',
+        'delivered','opened','clicked' => 'ok',
+        'bounced','failed'             => 'err',
+        default                        => 'warn',
     };
 }
 function zepto_icon(string $status): string {
     return match($status) {
-        'delivered' => '✓',
-        'opened'    => '👁',
-        'clicked'   => '↗',
-        'bounced'   => '↩',
-        'failed'    => '✕',
-        'sent'      => '→',
+        'delivered' => '✓', 'opened' => '👁', 'clicked' => '↗',
+        'bounced'   => '↩', 'failed' => '✕',  'sent'    => '→',
         default     => '·',
     };
 }
@@ -134,57 +138,90 @@ function zepto_icon(string $status): string {
 <div class="page-head">
     <div>
         <h1>Mail Deliverability</h1>
-        <div class="sub">Fetched directly from the Zepto Mail API — no plugin required</div>
+        <div class="sub">Delivery logs pulled directly from the Zepto Mail API</div>
     </div>
-    <?php if ($hasAnyToken): ?>
-    <form method="post" style="display:inline;">
-        <input type="hidden" name="_csrf"   value="<?= e(csrf_token()) ?>">
-        <input type="hidden" name="action"  value="refresh">
-        <input type="hidden" name="scope"   value="<?= e($scopeParam) ?>">
-        <input type="hidden" name="date_from" value="<?= e($dateFrom) ?>">
-        <input type="hidden" name="date_to"   value="<?= e($dateTo) ?>">
-        <button class="btn primary" type="submit">↻ Refresh from API</button>
-    </form>
+    <?php if ($hasAnyScope): ?>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <form method="post" style="margin:0;">
+            <input type="hidden" name="_csrf"     value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action"    value="refresh">
+            <input type="hidden" name="date_from" value="<?= e($dateFrom) ?>">
+            <input type="hidden" name="date_to"   value="<?= e($dateTo) ?>">
+            <button class="btn primary" type="submit">↻ Refresh from API</button>
+        </form>
+        <?php if ($isConnected): ?>
+        <form method="post" style="margin:0;" onsubmit="return confirm('Disconnect Zepto Mail? You can reconnect at any time.')">
+            <input type="hidden" name="_csrf"   value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action"  value="disconnect">
+            <button class="btn danger" type="submit" style="font-size:12px;">Disconnect</button>
+        </form>
+        <?php endif; ?>
+    </div>
     <?php endif; ?>
 </div>
 
 <?php if ($refreshedCount !== null): ?>
-<div class="flash success">Pulled <?= $refreshedCount ?> records from Zepto Mail API.</div>
+<div class="flash success">Pulled <?= $refreshedCount ?> records from Zepto Mail.</div>
 <?php endif; ?>
 <?php if ($apiError): ?>
 <div class="flash error">API error: <?= e($apiError) ?></div>
 <?php endif; ?>
 
-<?php if (!$hasAnyToken): ?>
-<div class="card" style="background:rgba(251,191,36,0.06); border-color:rgba(251,191,36,0.3); margin-bottom:20px;">
-    <div style="font-weight:500; margin-bottom:8px;">⚙ No Zepto API token configured</div>
-    <p style="margin:0; color:var(--text-dim); font-size:13px; line-height:1.6;">
-        To get started:
-        <ol style="margin:8px 0 0; padding-left:20px;">
-            <li>Log in to <strong>zeptomail.com</strong> → Settings → API Tokens → generate a token.</li>
-            <li>Add it to <code>config.local.php</code> under <code>zepto.api_token</code> for the global account, <em>or</em></li>
-            <li>Go to <a href="/sites.php">Sites</a> and set a per-site Zepto token for any site that has its own Zepto account.</li>
-        </ol>
+
+<?php /* ── State: credentials not configured ── */ ?>
+<?php if (!$isConfigured): ?>
+<div class="card" style="background:rgba(251,191,36,0.06); border-color:rgba(251,191,36,0.3); max-width:640px;">
+    <div style="font-weight:500; margin-bottom:8px;">⚙ Step 1 — Add OAuth credentials to config</div>
+    <p style="margin:0 0 10px; color:var(--text-dim); font-size:13px; line-height:1.7;">
+        Register a <strong>Server-based Application</strong> at
+        <strong>https://api-console.zoho.com/</strong>, then add to <code>config.local.php</code>:
+    </p>
+    <pre style="background:var(--bg-3); border:1px solid var(--line-2); border-radius:var(--r); padding:12px 14px; font-size:12px; overflow-x:auto; margin:0;">'zepto' => [
+    'client_id'     => 'YOUR_CLIENT_ID',
+    'client_secret' => 'YOUR_CLIENT_SECRET',
+    'redirect_uri'  => '<?= e(rtrim(cfg('app.base_url','https://your-dashboard.example.com'),'/')) ?>/zepto-oauth-callback.php',
+    'api_url'       => 'https://api.zeptomail.com/v1.1/',
+    'accounts_url'  => 'https://accounts.zoho.com',
+],</pre>
+    <p style="margin:10px 0 0; font-size:12px; color:var(--text-faint);">
+        Set Authorized Redirect URI in Zoho console to:
+        <code><?= e(rtrim(cfg('app.base_url','https://your-dashboard.example.com'),'/')) ?>/zepto-oauth-callback.php</code>
     </p>
 </div>
+
+<?php /* ── State: configured but not yet connected ── */ ?>
+<?php elseif (!$isConnected && !count($tokenSites)): ?>
+<div class="card" style="background:rgba(163,230,53,0.04); border-color:rgba(163,230,53,0.25); max-width:480px;">
+    <div style="font-weight:500; margin-bottom:8px;">⚡ Step 2 — Authorize with Zoho</div>
+    <p style="margin:0 0 14px; color:var(--text-dim); font-size:13px; line-height:1.6;">
+        Credentials are configured. Click below to open Zoho's authorization page,
+        then grant access to your Zepto Mail account.
+    </p>
+    <a href="/zepto-oauth.php" class="btn primary">Connect Zepto Mail →</a>
+</div>
+
+<?php /* ── State: connected or has per-site tokens — show full UI ── */ ?>
 <?php else: ?>
 
-<!-- Scope + date toolbar -->
+<!-- Connection status banner -->
+<div style="display:flex; align-items:center; gap:8px; margin-bottom:20px; font-size:13px; color:var(--text-dim);">
+    <span class="pill ok">✓ Connected</span>
+    Global Zepto Mail account linked via OAuth — showing logs from all Mail Agents.
+</div>
+
+<!-- Site filter + date range toolbar -->
 <form method="get" class="toolbar" style="margin-bottom:20px;">
-    <?php if ($hasGlobal || count($tokenSites) > 1): ?>
-    <select name="scope" onchange="this.form.submit()" style="width:200px;">
-        <?php if ($hasGlobal): ?>
-        <option value="global" <?= $scopeParam==='global'?'selected':'' ?>>Global (Dashboard)</option>
-        <?php endif; ?>
-        <?php foreach ($tokenSites as $ts): ?>
-        <option value="<?= (int)$ts['id'] ?>" <?= $scopeParam===(string)$ts['id']?'selected':'' ?>><?= e($ts['name']) ?></option>
+    <?php if ($logSenders): ?>
+    <select name="from" onchange="this.form.submit()" style="width:220px;">
+        <option value="">All Sites</option>
+        <?php foreach ($logSenders as $addr): ?>
+        <option value="<?= e($addr) ?>" <?= $fromFilter === $addr ? 'selected' : '' ?>>
+            <?= e($siteByFrom[$addr] ?? $addr) ?>
+        </option>
         <?php endforeach; ?>
     </select>
     <?php else: ?>
-    <span style="font-size:13px; color:var(--text-dim); padding:8px 0;">
-        Scope: <?= $scopeParam === 'global' ? 'Global (Dashboard)' : e($tokenSites[0]['name'] ?? '') ?>
-    </span>
-    <input type="hidden" name="scope" value="<?= e($scopeParam) ?>">
+    <span style="font-size:13px; color:var(--text-dim); padding:8px 0;">All Sites</span>
     <?php endif; ?>
 
     <label style="display:flex;align-items:center;gap:6px;margin:0;color:var(--text-dim);font-size:13px;">
@@ -204,7 +241,7 @@ function zepto_icon(string $status): string {
     <div class="card">
         <div class="label">Total sent</div>
         <div class="value"><?= number_format($total) ?></div>
-        <div class="delta">in cache for this scope</div>
+        <div class="delta"><?= $fromFilter ? e($siteByFrom[$fromFilter] ?? $fromFilter) : 'all sites' ?></div>
     </div>
     <div class="card" <?= $deliveredPct < 90 && $total > 0 ? 'style="border-color:rgba(251,191,36,0.4);"' : '' ?>>
         <div class="label">Delivered</div>
@@ -216,18 +253,20 @@ function zepto_icon(string $status): string {
         <div class="value" style="color:<?= $bouncePct > 5 ? 'var(--err)' : 'var(--text)' ?>;"><?= $bouncePct ?>%</div>
         <div class="delta"><?= number_format($bounced + $failed) ?> messages</div>
     </div>
-    <div class="card">
-        <div class="label">Open rate</div>
-        <div class="value"><?= $openPct ?>%</div>
-        <div class="delta"><?= number_format($opened) ?> of <?= number_format($delivered) ?> delivered</div>
+    <div class="card" <?= $processFailed > 0 ? 'style="border-color:rgba(248,113,113,0.4);"' : '' ?>>
+        <div class="label">Process failed</div>
+        <div class="value" style="color:<?= $processFailed > 0 ? 'var(--err)' : 'var(--text)' ?>;"><?= number_format($processFailed) ?></div>
+        <div class="delta">emails failed to process</div>
     </div>
 </div>
 
-<!-- Log filter -->
+<!-- Status filter + record count -->
 <form method="get" class="toolbar">
-    <input type="hidden" name="scope"      value="<?= e($scopeParam) ?>">
-    <input type="hidden" name="date_from"  value="<?= e($dateFrom) ?>">
-    <input type="hidden" name="date_to"    value="<?= e($dateTo) ?>">
+    <?php if ($fromFilter): ?>
+    <input type="hidden" name="from" value="<?= e($fromFilter) ?>">
+    <?php endif; ?>
+    <input type="hidden" name="date_from" value="<?= e($dateFrom) ?>">
+    <input type="hidden" name="date_to"   value="<?= e($dateTo) ?>">
     <select name="status" onchange="this.form.submit()" style="width:180px;">
         <option value="">All statuses</option>
         <?php foreach (['delivered','opened','clicked','sent','queued','bounced','failed'] as $st): ?>
@@ -240,7 +279,7 @@ function zepto_icon(string $status): string {
 
 <?php if (!$logs): ?>
 <div class="empty">
-    No records in cache yet.<br>
+    No records cached yet.<br>
     <?php if ($total === 0): ?>
     Click <strong>↻ Refresh from API</strong> to pull the latest delivery logs from Zepto Mail.
     <?php else: ?>
@@ -264,9 +303,8 @@ function zepto_icon(string $status): string {
     <?php foreach ($logs as $l): ?>
     <tr>
         <td style="font-size:12px;"><?= e($l['recipient'] ?: '—') ?></td>
-        <td style="font-size:12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="<?= e($l['subject']) ?>">
-            <?= e($l['subject'] ?: '—') ?>
-        </td>
+        <td style="font-size:12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+            title="<?= e($l['subject']) ?>"><?= e($l['subject'] ?: '—') ?></td>
         <td>
             <span class="pill <?= zepto_badge($l['status']) ?>"><?= zepto_icon($l['status']) ?> <?= e($l['status']) ?></span>
         </td>
@@ -277,7 +315,11 @@ function zepto_icon(string $status): string {
             <?= $l['delivered_at'] ? date('M j, Y H:i', strtotime($l['delivered_at'])) : '—' ?>
         </td>
         <td style="font-size:12px; color:var(--err); max-width:240px;">
-            <?= e($l['bounce_reason'] ?: '') ?: '<span style="color:var(--text-faint)">—</span>' ?>
+            <?php if ($l['bounce_reason']): ?>
+                <?= e($l['bounce_reason']) ?>
+            <?php else: ?>
+                <span style="color:var(--text-faint)">—</span>
+            <?php endif; ?>
         </td>
     </tr>
     <?php endforeach; ?>
@@ -290,7 +332,7 @@ function zepto_icon(string $status): string {
     <?php for ($p = 1; $p <= min($totalPages, 20); $p++): ?>
         <?php
         $qs = http_build_query(array_filter([
-            'scope'     => $scopeParam,
+            'from'      => $fromFilter ?: null,
             'date_from' => $dateFrom,
             'date_to'   => $dateTo,
             'status'    => $statusFilter ?: null,
@@ -310,6 +352,6 @@ function zepto_icon(string $status): string {
 <?php endif; ?>
 
 <?php endif; // end $logs ?>
-<?php endif; // end $hasAnyToken ?>
+<?php endif; // end connected/scope state ?>
 
 <?php require __DIR__ . '/../src/layout_foot.php'; ?>

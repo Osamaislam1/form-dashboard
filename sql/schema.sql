@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS sites (
     email_checked_at DATETIME NULL,
     email_error     VARCHAR(500) NULL,
     last_seen_at    DATETIME NULL,
-    zepto_api_token VARCHAR(255) DEFAULT NULL,
+    zepto_api_token  VARCHAR(255) DEFAULT NULL,   -- legacy enczapikey (no longer used in UI)
+    zepto_from_email VARCHAR(255) DEFAULT NULL,   -- sender address this site uses in Zepto
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_api_key (api_key),
     KEY idx_status (status)
@@ -86,19 +87,32 @@ CREATE TABLE IF NOT EXISTS webhook_log (
     KEY idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    service       VARCHAR(60) NOT NULL,   -- 'zepto_global' or 'zepto_site_N'
+    access_token  TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at    DATETIME NOT NULL,
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_service (service)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS zepto_mail_log (
     id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    site_id       INT UNSIGNED DEFAULT NULL,   -- NULL = global dashboard account
+    site_id       INT UNSIGNED DEFAULT NULL,   -- always NULL (global); kept for compatibility
     message_id    VARCHAR(255) DEFAULT NULL,
     recipient     VARCHAR(255) DEFAULT NULL,
+    from_address  VARCHAR(255) DEFAULT NULL,   -- email_info.from.address — used for site filtering
+    mailagent_key VARCHAR(150) DEFAULT NULL,   -- email_info.mailagent_key
     subject       VARCHAR(500) DEFAULT NULL,
     status        ENUM('queued','sent','delivered','bounced','opened','clicked','failed') NOT NULL DEFAULT 'sent',
     bounce_reason TEXT DEFAULT NULL,
     sent_at       DATETIME DEFAULT NULL,
     delivered_at  DATETIME DEFAULT NULL,
     fetched_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    KEY idx_site_sent (site_id, sent_at),
-    KEY idx_status    (status)
+    KEY idx_site_sent  (site_id, sent_at),
+    KEY idx_status     (status),
+    KEY idx_from       (from_address)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS email_health_log (

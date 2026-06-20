@@ -110,27 +110,13 @@ try {
 
     $fromIso = date('Y-m-d\T00:00:00P', strtotime('-1 day'));
     $toIso   = date('Y-m-d\T23:59:59P');
-    $synced  = [];
 
-    // Global scope
-    if (cfg('zepto.api_token', '') !== '') {
+    if (zepto_is_connected()) {
         $r = zepto_fetch_and_cache(null, $fromIso, $toIso);
-        $synced['global'] = $r;
+        $report['tasks']['zepto_sync'] = ['inserted' => $r['inserted'], 'error' => $r['error']];
+    } else {
+        $report['tasks']['zepto_sync'] = ['skipped' => 'no OAuth connection'];
     }
-
-    // Per-site scopes
-    $siteTokens = $pdo->query(
-        "SELECT id, name FROM sites WHERE zepto_api_token IS NOT NULL AND zepto_api_token != ''"
-    )->fetchAll();
-    foreach ($siteTokens as $st) {
-        $r = zepto_fetch_and_cache((int)$st['id'], $fromIso, $toIso);
-        $synced[$st['name']] = $r;
-    }
-
-    $report['tasks']['zepto_sync'] = [
-        'scopes_synced' => count($synced),
-        'detail'        => $synced,
-    ];
 } catch (\Throwable $e) {
     $report['tasks']['zepto_sync'] = ['error' => $e->getMessage()];
 }
