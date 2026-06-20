@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Form Dashboard Bridge
  * Description: Sends form submissions from this site to a central Form Dashboard. Supports Forminator, Contact Form 7, Gravity Forms, WPForms, Fluent Forms, and Elementor Forms.
- * Version:     1.2.1
+ * Version:     1.3.9
  * Author:      You
  * License:     GPL-2.0-or-later
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class Form_Dashboard_Bridge {
 
     const OPT            = 'fdash_settings';
-    const VERSION        = '1.2.1';
+    const VERSION        = '1.3.9';
     const UPDATE_JSON_URL = 'https://raw.githubusercontent.com/Osamaislam1/form-dashboard/main/plugin-version.json';
 
     public static function init() {
@@ -615,9 +615,8 @@ class Form_Dashboard_Bridge {
                     $form_titles[$fid] = get_the_title($fid) ?: "Forminator #{$fid}";
                 }
 
-                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
                 $metas = $wpdb->get_results(
-                    "SELECT meta_key, meta_value FROM {$meta_table} WHERE entry_id = {$entry_id}"
+                    $wpdb->prepare("SELECT meta_key, meta_value FROM {$meta_table} WHERE entry_id = %d", $entry_id)
                 );
                 $fields = [];
                 foreach ((array)$metas as $m) {

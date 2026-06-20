@@ -62,12 +62,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $user['role'] === 'admin') {
         $pdo->prepare('UPDATE sites SET resync_requested_at = NULL WHERE id = ?')->execute([$id]);
         flash('Resync request cancelled.', 'success');
         redirect('/sites.php');
-    } elseif ($action === 'save_zepto_from') {
-        $id    = (int)($_POST['id'] ?? 0);
-        $email = trim($_POST['zepto_from_email'] ?? '');
-        $pdo->prepare('UPDATE sites SET zepto_from_email = ? WHERE id = ?')->execute([$email ?: null, $id]);
-        flash($email ? 'Zepto From Email saved.' : 'Zepto From Email cleared.', 'success');
-        redirect('/sites.php');
     }
 }
 
@@ -227,7 +221,6 @@ function togglePanel(id) {
                 <button name="action" value="toggle" class="btn" title="Pause/resume"><?= $s['status']==='active'?'Pause':'Resume' ?></button>
                 <button name="action" value="rotate" class="btn" title="Rotate secret">Rotate</button>
                 <button type="button" class="btn" onclick="togglePanel('resync-<?= (int)$s['id'] ?>')">Resync</button>
-                <button type="button" class="btn" onclick="togglePanel('zepto-<?= (int)$s['id'] ?>')" title="Set Zepto Mail API token">Zepto</button>
                 <button name="action" value="delete" class="btn danger"
                     onclick="return confirm('Delete site and all its submissions?')">Delete</button>
             </form>
@@ -283,35 +276,6 @@ function togglePanel(id) {
             })();
             </script>
 
-            <!-- Zepto Mail from-email panel -->
-            <div id="zepto-<?= (int)$s['id'] ?>" class="resync-panel">
-                <p style="margin:0 0 8px;font-size:13px;font-weight:500;">Zepto Mail — <?= e($s['name']) ?></p>
-                <p style="margin:0 0 10px;font-size:12px;color:var(--text-dim);">
-                    Enter the <strong>From</strong> email address this site uses when sending via Zepto Mail.<br>
-                    This links the site to its logs on the <a href="/mail-deliverability.php">Mail Deliverability</a> page.
-                </p>
-                <form method="post">
-                    <input type="hidden" name="_csrf"  value="<?= e(csrf_token()) ?>">
-                    <input type="hidden" name="action" value="save_zepto_from">
-                    <input type="hidden" name="id"     value="<?= (int)$s['id'] ?>">
-                    <div class="field" style="margin-bottom:10px;">
-                        <input type="email" name="zepto_from_email"
-                               placeholder="website@yourdomain.com"
-                               value="<?= e($s['zepto_from_email'] ?? '') ?>"
-                               style="font-size:13px;">
-                    </div>
-                    <?php if (!empty($s['zepto_from_email'])): ?>
-                    <span class="pill ok" style="margin-bottom:8px;display:inline-block;">✓ <?= e($s['zepto_from_email']) ?></span>
-                    <?php endif; ?>
-                    <div style="display:flex;gap:8px;margin-top:6px;">
-                        <button class="btn primary" style="font-size:12px;">Save</button>
-                        <button type="button" class="btn" style="font-size:12px;" onclick="togglePanel('zepto-<?= (int)$s['id'] ?>')">Cancel</button>
-                        <?php if (!empty($s['zepto_from_email'])): ?>
-                        <a href="/mail-deliverability.php?from=<?= urlencode($s['zepto_from_email']) ?>" class="btn" style="font-size:12px;">View logs →</a>
-                        <?php endif; ?>
-                    </div>
-                </form>
-            </div>
         </td>
         <?php endif; ?>
     </tr>

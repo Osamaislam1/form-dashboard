@@ -15,6 +15,7 @@ if (!empty($_GET['error'])) {
 $expectedState = $_SESSION['zepto_oauth_state'] ?? '';
 $receivedState = $_GET['state'] ?? '';
 unset($_SESSION['zepto_oauth_state']);
+session_regenerate_id(true);
 
 if ($expectedState === '' || !hash_equals($expectedState, $receivedState)) {
     flash('OAuth state mismatch — possible CSRF. Please try connecting again.', 'error');

@@ -107,7 +107,7 @@ function zepto_exchange_code(string $code): array
 
     $data = $result['data'];
     if (empty($data['access_token']) || empty($data['refresh_token'])) {
-        return ['ok' => false, 'error' => 'Missing tokens in response: ' . json_encode($data)];
+        return ['ok' => false, 'error' => 'OAuth token exchange failed — check client credentials'];
     }
 
     $expiresAt = date('Y-m-d H:i:s', time() + (int)($data['expires_in'] ?? 3600));
@@ -285,9 +285,12 @@ function zepto_fetch_and_cache(?int $site_id, string $from, string $to): array
         }
     }
 
-    // Replace the global cache (site_id IS NULL — unified store for all Mail Agents)
-    $pdo = db();
-    $pdo->exec('DELETE FROM zepto_mail_log WHERE site_id IS NULL');
+    // Delete only records within the requested date window so historical data is preserved
+    $pdo       = db();
+    $fromMysql = date('Y-m-d H:i:s', strtotime($from));
+    $toMysql   = date('Y-m-d H:i:s', strtotime($to));
+    $pdo->prepare('DELETE FROM zepto_mail_log WHERE site_id IS NULL AND sent_at BETWEEN ? AND ?')
+        ->execute([$fromMysql, $toMysql]);
 
     $validStatuses = ['queued', 'sent', 'delivered', 'bounced', 'opened', 'clicked', 'failed'];
 

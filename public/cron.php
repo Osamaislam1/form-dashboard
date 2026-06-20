@@ -108,7 +108,7 @@ try {
 try {
     require_once FDASH_ROOT . '/src/zepto_api.php';
 
-    $fromIso = date('Y-m-d\T00:00:00P', strtotime('-1 day'));
+    $fromIso = date('Y-m-d\T00:00:00P', strtotime('-6 days'));
     $toIso   = date('Y-m-d\T23:59:59P');
 
     if (zepto_is_connected()) {
