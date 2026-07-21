@@ -27,8 +27,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $user['role'] === 'admin') {
         } elseif ($invalidEmail !== null) {
             flash('Invalid email address: ' . e($invalidEmail), 'error');
         } else {
-            $pdo->prepare('INSERT INTO alert_rules (name, type, site_id, form_id, notify_emails) VALUES (?, ?, ?, ?, ?)')
-                ->execute([$name, $type, $sid, $fid, implode(', ', $emailList)]);
+            // email_health rules get a 6h cooldown so a daily health check can't re-alert
+            // every single day it stays unresolved; submission alerts keep the 5min default.
+            $cooldown = $type === 'email_health' ? 21600 : 300;
+            $pdo->prepare('INSERT INTO alert_rules (name, type, site_id, form_id, notify_emails, cooldown_seconds) VALUES (?, ?, ?, ?, ?, ?)')
+                ->execute([$name, $type, $sid, $fid, implode(', ', $emailList), $cooldown]);
             flash('Alert rule created.', 'success');
         }
         redirect('/alerts.php');

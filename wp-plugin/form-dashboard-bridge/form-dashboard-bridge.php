@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Form Dashboard Bridge
  * Description: Sends form submissions from this site to a central Form Dashboard. Supports Forminator, Contact Form 7, Gravity Forms, WPForms, Fluent Forms, and Elementor Forms.
- * Version:     1.3.9
+ * Version:     1.4.1
  * Author:      You
  * License:     GPL-2.0-or-later
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class Form_Dashboard_Bridge {
 
     const OPT            = 'fdash_settings';
-    const VERSION        = '1.3.9';
+    const VERSION        = '1.4.1';
     const UPDATE_JSON_URL = 'https://raw.githubusercontent.com/Osamaislam1/form-dashboard/main/plugin-version.json';
 
     public static function init() {
@@ -1220,8 +1220,16 @@ class Form_Dashboard_Bridge {
             }
         }
 
+        // Post SMTP stores the warning/status message text (not the literal '1') in the
+        // `success` column even for sends it considers successful (e.g. its 'WARN' case) —
+        // see PostmanEmailLogService::writeToEmailLog(). That's indistinguishable from a real
+        // failure message at the SQL level, so a single successful-but-noted send can otherwise
+        // look like a failure here. Only treat this as unhealthy when failures are the majority
+        // of recent attempts, not merely "at least one ambiguous row".
+        $ok = $total > 0 && ($fail_count / $total) <= 0.5;
+
         return [
-            'ok'         => $fail_count === 0,
+            'ok'         => $ok,
             'fail_count' => $fail_count,
             'total'      => $total,
             'error'      => $latest_err,

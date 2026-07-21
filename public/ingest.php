@@ -96,8 +96,11 @@ if (($data['type'] ?? '') === 'email_health') {
 
     if ($status === 'fail') {
         try {
+            // Floor the cooldown at 6h regardless of what's stored: a daily health check can
+            // otherwise re-alert every single day (or more, if the admin-load test and cron
+            // both report fail) once cooldown_seconds sits at the 300s schema default.
             $rules = $pdo->prepare(
-                "SELECT ar.*, ar.cooldown_seconds, ar.last_alerted_at
+                "SELECT ar.*, GREATEST(ar.cooldown_seconds, 21600) AS cooldown_seconds, ar.last_alerted_at
                  FROM alert_rules ar
                  WHERE ar.type = 'email_health' AND ar.enabled = 1
                    AND (ar.site_id IS NULL OR ar.site_id = ?)"
