@@ -1224,9 +1224,10 @@ class Form_Dashboard_Bridge {
         // `success` column even for sends it considers successful (e.g. its 'WARN' case) —
         // see PostmanEmailLogService::writeToEmailLog(). That's indistinguishable from a real
         // failure message at the SQL level, so a single successful-but-noted send can otherwise
-        // look like a failure here. Only treat this as unhealthy when failures are the majority
-        // of recent attempts, not merely "at least one ambiguous row".
-        $ok = $total > 0 && ($fail_count / $total) <= 0.5;
+        // look like a failure here. A single ambiguous row is never enough on its own (with only
+        // one attempt logged, a ratio is always 0 or 1 and can't tell "noise" from "outage");
+        // require at least 2 failures before the majority-ratio judgment applies.
+        $ok = $fail_count < 2 || ($fail_count / $total) <= 0.5;
 
         return [
             'ok'         => $ok,
